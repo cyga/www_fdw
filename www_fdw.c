@@ -17,13 +17,12 @@
 #include "utils/rel.h"
 #include "utils/builtins.h"
 #include "executor/spi.h"
+#include "utils/fmgroids.h"
 
 #include "curl/curl.h"
 #include "libjson-0.8/json.h"
 
 PG_MODULE_MAGIC;
-
-#define PROCID_TEXTEQ 67
 
 struct WWWFdwOption
 {
@@ -32,29 +31,65 @@ struct WWWFdwOption
 };
 
 /*
- * Valid options for mysql_fdw.
+ * Valid options for this extension.
  *
  */
 static struct WWWFdwOption valid_options[] =
 {
-	/* TODO */
-	{ "callback",		ForeignServerRelationId },
+	{ "uri",		ForeignServerRelationId },
+	{ "uri_select",	ForeignServerRelationId },
+	{ "uri_insert",	ForeignServerRelationId },
+	{ "uri_delete",	ForeignServerRelationId },
+	{ "uri_update",	ForeignServerRelationId },
+	{ "uri_callback",	ForeignServerRelationId },
+
+	{ "method_select",	ForeignServerRelationId },
+	{ "method_insert",	ForeignServerRelationId },
+	{ "method_delete",	ForeignServerRelationId },
+	{ "method_update",	ForeignServerRelationId },
+
+	{ "request_serialize_callback",	ForeignServerRelationId },
+
+	{ "response_type",	ForeignServerRelationId },
+	{ "response_deserialize_callback",	ForeignServerRelationId },
+	{ "response_iterate_callback",	ForeignServerRelationId },
 
 	/* Sentinel */
 	{ NULL,			InvalidOid }
 };
 
+typedef struct	WWWFdwOptions
+{
+	char*	uri;
+	char*	uri_select;
+	char*	uri_insert;
+	char*	uri_delete;
+	char*	uri_update;
+	char*	uri_callback;
+	char*	method_select;
+	char*	method_insert;
+	char*	method_delete;
+	char*	method_update;
+	char*	request_serialize_callback;
+	char*	response_type;
+	char*	response_deserialize_callback;
+	char*	response_iterate_callback;
+} WWWFdwOptions;
+
+/* TODO: understand which result we will have */
 typedef struct ResultRoot
 {
 	struct ResultArray	   *results;
 } ResultRoot;
 
+/* TODO: understand which result we will have */
 typedef struct ResultArray
 {
 	int					index;
 	struct Tweet	   *elements[512];
 } ResultArray;
 
+/* TODO: understand which result we will have */
 typedef struct Tweet
 {
 	char	   *id;
@@ -69,6 +104,7 @@ typedef struct Tweet
 	char	   *created_at;
 } Tweet;
 
+/* TODO: understand which result we will have */
 typedef struct WWWReply
 {
 	ResultRoot	   *root;
@@ -78,6 +114,7 @@ typedef struct WWWReply
 } WWWReply;
 
 static bool wwwIsValidOption(const char *option, Oid context);
+static void getOptions(Oid foreigntableid, WWWFdwOptions *opts);
 
 /*
  * SQL functions
@@ -106,17 +143,45 @@ static void *create_data(int type, const char *data, uint32_t length);
 static int append(void *structure, char *key, uint32_t key_length, void *obj);
 
 
+static bool
+parse_parameter(char* name, char** var, DefElem* param)
+{
+	if( 0 == strcmp(param->defname, name) )
+	{
+		if (*var)
+			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("conflicting or redundant options: %s (%s)", name, defGetString(param))
+				));
+
+		*var = defGetString(param);
+		return	true;
+	}
+	return	false;
+}
+
 Datum
 www_fdw_validator(PG_FUNCTION_ARGS)
 {
 	List		*options_list = untransformRelOptions(PG_GETARG_DATUM(0));
-	Oid		catalog = PG_GETARG_OID(1);
-	char		*callback = NULL;
+	Oid			catalog = PG_GETARG_OID(1);
 	ListCell	*cell;
-	int			res;
+	char		*uri	= NULL;
+	char		*uri_select	= NULL;
+	char		*uri_insert	= NULL;
+	char		*uri_delete	= NULL;
+	char		*uri_update	= NULL;
+	char		*uri_callback	= NULL;
+	char		*method_select	= NULL;
+	char		*method_insert	= NULL;
+	char		*method_delete	= NULL;
+	char		*method_update	= NULL;
+	char		*request_serialize_callback	= NULL;
+	char		*response_type	= NULL;
+	char		*response_deserialize_callback	= NULL;
+	char		*response_iterate_callback	= NULL;
 
 	/*
-	 * Check that only options supported by mysql_fdw,
+	 * Check that only options supported by this extension
 	 * and allowed for the current object type, are given.
 	 */
 	foreach(cell, options_list)
@@ -147,73 +212,36 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 				));
 		}
 
-		if (strcmp(def->defname, "callback") == 0)
-		{
-			if (callback)
+		if(parse_parameter("uri", &uri, def)) continue;
+		if(parse_parameter("uri_select", &uri_select, def)) continue;
+		if(parse_parameter("uri_insert", &uri_insert, def)) continue;
+		if(parse_parameter("uri_delete", &uri_delete, def)) continue;
+		if(parse_parameter("uri_update", &uri_update, def)) continue;
+		if(parse_parameter("uri_callback", &uri_callback, def)) continue;
+		if(parse_parameter("method_select", &method_select, def)) continue;
+		if(parse_parameter("method_insert", &method_insert, def)) continue;
+		if(parse_parameter("method_delete", &method_delete, def)) continue;
+		if(parse_parameter("method_update", &method_update, def)) continue;
+		if(parse_parameter("request_serialize_callback", &request_serialize_callback, def)) continue;
+		if(parse_parameter("response_type", &response_type, def)) {
+			if(
+				0 != strcmp(response_type, "json")
+				&&
+				0 != strcmp(response_type, "xml")
+				&&
+				0 != strcmp(response_type, "yaml")
+				&&
+				0 != strcmp(response_type, "other")
+			)
+			{
 				ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("conflicting or redundant options: address (%s)", defGetString(def))
+					errmsg("invalid value for response_type: %s", response_type)
 					));
-
-			callback = defGetString(def);
-
-			/* DEBUG */
-			res	= SPI_connect();
-			if(SPI_OK_CONNECT != res)
-			{
-				ereport(
-					ERROR,
-					(
-						errcode(ERRCODE_SYNTAX_ERROR),
-						errmsg("can't spi connect: %i", res)
-					)
-				);
 			}
-			res	= SPI_execute(callback, false, 0);
-			/* if(SPI_OK_SELECT != res) */
-			if(0 > res)
-			{
-				ereport(
-					ERROR,
-					(
-						errcode(ERRCODE_SYNTAX_ERROR),
-						errmsg("can't spi execute: %i", res)
-					)
-				);
-			}
-			else
-			{
-				ereport(
-					NOTICE,
-					(
-						errcode(ERRCODE_SYNTAX_ERROR),
-						errmsg("number of rows: %i", SPI_processed)
-					)
-				);
-				//SPI_tuptable->vals->
-			}
-			res	= SPI_finish();
-			if(SPI_OK_FINISH != res)
-			{
-				ereport(
-					ERROR,
-					(
-						errcode(ERRCODE_SYNTAX_ERROR),
-						errmsg("can't spi finish: %i", res)
-					)
-				);
-			}
-			res	= SPI_execute(callback, false, 1);
-		}
-		else if (strcmp(def->defname, "TODO") == 0)
-		{
-			/* if (svr_port) */
-			/* 	ereport(ERROR, */
-			/* 		(errcode(ERRCODE_SYNTAX_ERROR), */
-			/* 		errmsg("conflicting or redundant options: port (%s)", defGetString(def)) */
-			/* 		)); */
-
-			/* svr_port = atoi(defGetString(def)); */
-		}
+			continue;
+		};
+		if(parse_parameter("response_deserialize_callback", &response_deserialize_callback, def)) continue;
+		if(parse_parameter("response_iterate_callback", &response_iterate_callback, def)) continue;
 	}
 
 	PG_RETURN_VOID();
@@ -301,8 +329,14 @@ percent_encode(unsigned char *s, int srclen)
 	return buf.data;
 }
 
+/*
+ * wwwParam
+ *  check and create column=value string for column=value criteria in query
+ *  raise error for operators differ from '='
+ *  raise error for operators with not 2 arguments
+ */
 static char *
-www_param(Node *node, TupleDesc tupdesc)
+wwwParam(Node *node, TupleDesc tupdesc)
 {
 	if (node == NULL)
 		return NULL;
@@ -315,7 +349,7 @@ www_param(Node *node, TupleDesc tupdesc)
 		char	   *key, *val;
 
 		if (list_length(op->args) != 2)
-			return NULL;
+			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Operators with not 2 arguments aren't supported")));
 		left = list_nth(op->args, 0);
 		if (!IsA(left, Var))
 			return NULL;
@@ -323,29 +357,27 @@ www_param(Node *node, TupleDesc tupdesc)
 		Assert(0 < varattno && varattno <= tupdesc->natts);
 		key = NameStr(tupdesc->attrs[varattno - 1]->attname);
 
-		if (strcmp(key, "q") == 0)
+		right = list_nth(op->args, 1);
+		if (op->opfuncid != F_TEXTEQ)
+			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Invalid operator, only '=' is supported")));
+
+		if (IsA(right, Const))
 		{
-			right = list_nth(op->args, 1);
-			if (op->opfuncid != PROCID_TEXTEQ)
-				elog(ERROR, "invalid operator");
+			StringInfoData	buf;
 
-			if (IsA(right, Const))
-			{
-				StringInfoData	buf;
-
-				initStringInfo(&buf);
-				val = TextDatumGetCString(((Const *) right)->constvalue);
-				appendStringInfo(&buf, "q=%s",
-					percent_encode((unsigned char *) val, -1));
-				return buf.data;
-			}
-			else
-				elog(ERROR, "www_fdw: parameter q must be a constant");
+			initStringInfo(&buf);
+			val = TextDatumGetCString(((Const *) right)->constvalue);
+			appendStringInfo(&buf, "%s=%s", percent_encode((unsigned char *) key, -1),
+				percent_encode((unsigned char *) val, -1));
+			return buf.data;
 		}
+		else
+			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Value for parameter must be constant")));
 	}
 
 	return NULL;
 }
+
 /*
  * wwwPlan
  *   Create a FdwPlan, which is empty for now.
@@ -368,36 +400,17 @@ wwwPlan(Oid foreigntableid, PlannerInfo *root, RelOptInfo *baserel)
 static void
 wwwExplain(ForeignScanState *node, ExplainState *es)
 {
-	ExplainPropertyText("WWW API", "Search", es);
+	ExplainPropertyText("WWW API", "Request", es);
 }
 
 /*
- * wwwBegin
- *   Query search API and setup result
+ * serializeRequestParameters
+ *  serialize column=value sql conditions into column=value get parameters
+ *  column & value are url encoded
  */
 static void
-wwwBegin(ForeignScanState *node, int eflags)
+serializeRequestParameters(ForeignScanState* node, StringInfoData *url)
 {
-	CURL		   *curl;
-	int				ret;
-	json_parser		parser;
-	json_parser_dom helper;
-	ResultRoot	   *root;
-	Relation		rel;
-	AttInMetadata  *attinmeta;
-	WWWReply   *reply;
-	StringInfoData	url;
-	char		   *param_q = NULL;
-
-	/*
-	 * Do nothing in EXPLAIN
-	 */
-	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
-		return;
-
-	initStringInfo(&url);
-	appendStringInfoString(&url, "http://search.www.com/search.json");
-
 	if (node->ss.ps.plan->qual)
 	{
 		bool		param_first = true;
@@ -408,31 +421,88 @@ wwwBegin(ForeignScanState *node, int eflags)
 		{
 			ExprState	   *state = lfirst(lc);
 
-			char *param = www_param((Node *) state->expr,
+			char *param = wwwParam((Node *) state->expr,
 							node->ss.ss_currentRelation->rd_att);
 			if (param)
 			{
 				if (param_first)
-					appendStringInfoChar(&url, '?');
+					appendStringInfoChar(url, '?');
 				else
-					appendStringInfoChar(&url, '&');
-				appendStringInfoString(&url, param);
-				if (param[0] == 'q' && param[1] == '=')
-					param_q = &param[2];
+					appendStringInfoChar(url, '&');
+				appendStringInfoString(url, param);
 
 				/* take it from original qual */
 				node->ss.ps.qual = list_delete(node->ss.ps.qual, (void *) state);
 			}
-//			else
-//				elog(ERROR, "Unknown qual");
+			else
+				ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Unknown qual")));
 		}
-//		node->ss.ps.qual = NIL;
+	}
+}
+/*
+ * wwwBegin
+ *   Query search API and setup result
+ */
+static void
+wwwBegin(ForeignScanState *node, int eflags)
+{
+	WWWFdwOptions	opts;
+	CURL		   *curl;
+	int				ret;
+	StringInfoData	url;
+
+	/* TODO: old, to check/update/delete */
+	json_parser		parser;
+	json_parser_dom helper;
+	ResultRoot	   *root;
+	Relation		rel;
+	AttInMetadata  *attinmeta;
+	WWWReply   *reply;
+	char* param_q	= NULL;
+
+	/*
+	 * Do nothing in EXPLAIN
+	 */
+	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
+		return;
+
+	getOptions( RelationGetRelid(node->ss.ss_currentRelation), &opts );
+
+	initStringInfo(&url);
+	appendStringInfo(&url, "%s%s", opts.uri, opts.uri_select);
+
+	if(opts.request_serialize_callback)
+	{
+		/* call specified callback for forming request */
+		serializeRequest(url, opts, node, &url2, &struct4otherParams);
+	}
+	else
+	{
+		serializeRequestParameters(node, &url);
 	}
 
-	json_parser_dom_init(&helper, create_structure, create_data, append);
-	json_parser_init(&parser, NULL, json_parser_dom_callback, &helper);
+	elog(DEBUG1, "url for request: '%s'", url.data);
+
+	elog(ERROR, "TODO: not implemented yet");
+
+	/* TODO prepare parsers */
+	if( 0 == strcmp(opts.response_type, "json") )
+	{
+		json_parser_dom_init(&helper, create_structure, create_data, append);
+		json_parser_init(&parser, NULL, json_parser_dom_callback, &helper);
+	}
+	else if( 0 == strcmp(opts.response_type, "xml") )
+	{
+	}
+	else if( 0 == strcmp(opts.response_type, "yaml") )
+	{
+	}
+	else if( 0 == strcmp(opts.response_type, "other") )
+	{
+	}
 
 	elog(DEBUG1, "requesting %s", url.data);
+	/* TODO interacting with the server */
 	curl = curl_easy_init();
 	curl_easy_setopt(curl, CURLOPT_URL, url.data);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
@@ -448,18 +518,6 @@ wwwBegin(ForeignScanState *node, int eflags)
 	/* status != 200, or other similar error */
 	if (!root)
 		elog(INFO, "Failed fetching response from %s", url.data);
-
-#ifdef NOT_USE
-	if (root->results)
-	{
-		int i;
-		for(i = 0; i < root->results->index; i++)
-		{
-			Tweet *tweet = root->results->elements[i];
-			printf("%02d[%s]: %s\n", (i + 1), tweet->from_user, tweet->text);
-		}
-	}
-#endif
 
 	reply = (WWWReply *) palloc(sizeof(WWWReply));
 	reply->root = root;
@@ -684,4 +742,110 @@ append(void *structure, char *key, uint32_t key_length, void *obj)
 			array->elements[array->index++] = (Tweet *) obj;
 	}
 	return 0;
+}
+
+/*
+ * Fetch the options for a mysql_fdw foreign table.
+ */
+static void
+getOptions(Oid foreigntableid, WWWFdwOptions *opts)
+{
+	ForeignTable	*f_table;
+	ForeignServer	*f_server;
+	UserMapping	*f_mapping;
+	List		*options;
+	ListCell	*lc;
+
+	/*
+	 * Extract options from FDW objects.
+	 */
+	f_table = GetForeignTable(foreigntableid);
+	f_server = GetForeignServer(f_table->serverid);
+	f_mapping = GetUserMapping(GetUserId(), f_table->serverid);
+
+	options = NIL;
+	options = list_concat(options, f_table->options);
+	options = list_concat(options, f_server->options);
+	options = list_concat(options, f_mapping->options);
+
+	/* init options */
+	opts->uri	= NULL;
+	opts->uri_select	= NULL;
+	opts->uri_insert	= NULL;
+	opts->uri_delete	= NULL;
+	opts->uri_update	= NULL;
+	opts->uri_callback	= NULL;
+	opts->method_select	= NULL;
+	opts->method_insert	= NULL;
+	opts->method_delete	= NULL;
+	opts->method_update	= NULL;
+	opts->request_serialize_callback	= NULL;
+	opts->response_type	= NULL;
+	opts->response_deserialize_callback	= NULL;
+	opts->response_iterate_callback		= NULL;
+
+	/* Loop through the options, and get the server/port */
+	foreach(lc, options)
+	{
+		DefElem *def = (DefElem *) lfirst(lc);
+
+		if (strcmp(def->defname, "uri") == 0)
+			opts->uri	= defGetString(def);
+
+		if (strcmp(def->defname, "uri_select") == 0)
+			opts->uri_select	= defGetString(def);
+
+		if (strcmp(def->defname, "uri_insert") == 0)
+			opts->uri_insert	= defGetString(def);
+
+		if (strcmp(def->defname, "uri_delete") == 0)
+			opts->uri_delete	= defGetString(def);
+
+		if (strcmp(def->defname, "uri_update") == 0)
+			opts->uri_update	= defGetString(def);
+
+		if (strcmp(def->defname, "method_select") == 0)
+			opts->method_select	= defGetString(def);
+
+		if (strcmp(def->defname, "method_insert") == 0)
+			opts->method_insert	= defGetString(def);
+
+		if (strcmp(def->defname, "method_delete") == 0)
+			opts->method_delete	= defGetString(def);
+
+		if (strcmp(def->defname, "method_update") == 0)
+			opts->method_update	= defGetString(def);
+
+		if (strcmp(def->defname, "request_serialize_callback") == 0)
+			opts->request_serialize_callback	= defGetString(def);
+
+		if (strcmp(def->defname, "response_type") == 0)
+			opts->response_type	= defGetString(def);
+
+		if (strcmp(def->defname, "response_deserialize_callback") == 0)
+			opts->response_deserialize_callback	= defGetString(def);
+
+		if (strcmp(def->defname, "response_iterate_callback") == 0)
+			opts->response_iterate_callback	= defGetString(def);
+	}
+
+	/* Default values, if required */
+	if (!opts->uri_select) opts->uri_select	= "";
+	if (!opts->uri_insert) opts->uri_insert	= "";
+	if (!opts->uri_delete) opts->uri_delete	= "";
+	if (!opts->uri_update) opts->uri_update	= "";
+
+	if (!opts->method_select) opts->method_select	= "GET";
+	if (!opts->method_insert) opts->method_insert	= "PUT";
+	if (!opts->method_delete) opts->method_delete	= "DELETE";
+	if (!opts->method_update) opts->method_update	= "POST";
+
+	if (!opts->response_type) opts->response_type	= "";
+
+	/* Check we have mandatory options */
+	if (!opts->uri)
+		ereport(ERROR,
+			(errcode(ERRCODE_SYNTAX_ERROR),
+			errmsg("At least uri option must be specified")
+			));
 }
