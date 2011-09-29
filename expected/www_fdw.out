@@ -1,3 +1,4 @@
+-- TODO
 CREATE EXTENSION www_fdw;
 SELECT count(*) FROM twitter;
  count 
