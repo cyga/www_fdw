@@ -18,11 +18,16 @@
 #include "utils/builtins.h"
 #include "executor/spi.h"
 #include "utils/fmgroids.h"
+#include "catalog/pg_type.h"
 
 #include "curl/curl.h"
 #include "libjson-0.8/json.h"
 
 PG_MODULE_MAGIC;
+
+bool	SPI_inited	= false;
+/* wrapper for init code, not to duplicate it */
+static void SPI_init(void);
 
 struct WWWFdwOption
 {
@@ -75,6 +80,13 @@ typedef struct	WWWFdwOptions
 	char*	response_deserialize_callback;
 	char*	response_iterate_callback;
 } WWWFdwOptions;
+
+Oid	WWWFdwOptionsOid	= 0;
+/* DEBUG check if all needed */
+TupleDesc	WWWFdwOptionsTupleDesc;
+AttInMetadata*	WWWFdwOptionsAIM;
+/* used to initialize OID above and return, basically wrapper for init code */
+static Oid getWWWFdwOptionsOid(void);
 
 /* TODO: understand which result we will have */
 typedef struct ResultRoot
@@ -344,36 +356,48 @@ wwwParam(Node *node, TupleDesc tupdesc)
 	if (IsA(node, OpExpr))
 	{
 		OpExpr	   *op = (OpExpr *) node;
-		Node	   *left, *right;
+		Node	   *left, *right, *tmp;
 		Index		varattno;
 		char	   *key, *val;
+		StringInfoData	buf;
 
 		if (list_length(op->args) != 2)
 			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Operators with not 2 arguments aren't supported")));
+
+		if (op->opfuncid != F_TEXTEQ)
+			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Invalid operator, only '=' is supported")));
+
 		left = list_nth(op->args, 0);
-		if (!IsA(left, Var))
-			return NULL;
+		right = list_nth(op->args, 1);
+		if(!(
+			(IsA(left, Var) && IsA(right, Const))
+			||
+			(IsA(left, Const) && IsA(right, Var))
+		))
+			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("One operand supposed to be column another constant")));
+		if(IsA(left, Const) && IsA(right, Var))
+		{
+			tmp		= left;
+			left	= right;
+			right	= tmp;
+		}
+
 		varattno = ((Var *) left)->varattno;
 		Assert(0 < varattno && varattno <= tupdesc->natts);
 		key = NameStr(tupdesc->attrs[varattno - 1]->attname);
 
-		right = list_nth(op->args, 1);
-		if (op->opfuncid != F_TEXTEQ)
-			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Invalid operator, only '=' is supported")));
-
-		if (IsA(right, Const))
-		{
-			StringInfoData	buf;
-
-			initStringInfo(&buf);
-			val = TextDatumGetCString(((Const *) right)->constvalue);
-			appendStringInfo(&buf, "%s=%s", percent_encode((unsigned char *) key, -1),
-				percent_encode((unsigned char *) val, -1));
-			return buf.data;
-		}
-		else
-			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Value for parameter must be constant")));
+		initStringInfo(&buf);
+		val = TextDatumGetCString(((Const *) right)->constvalue);
+		appendStringInfo(&buf, "%s=%s", percent_encode((unsigned char *) key, -1),
+			percent_encode((unsigned char *) val, -1));
+		return buf.data;
 	}
+	else
+	{
+		ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Only simple WHERE statements are covered: column=const [AND column2=const2 ...]")));
+	}
+
+	ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Strange error in parameter parser")));
 
 	return NULL;
 }
@@ -403,6 +427,104 @@ wwwExplain(ForeignScanState *node, ExplainState *es)
 	ExplainPropertyText("WWW API", "Request", es);
 }
 
+static
+char*
+describeSPIcode(int code)
+{
+	switch(code)
+	{
+		case SPI_ERROR_CONNECT:		return "ERROR CONNECT";
+		case SPI_ERROR_COPY:			return "ERROR COPY";
+		case SPI_ERROR_OPUNKNOWN:	return "ERROR OPUNKNOWN";
+		case SPI_ERROR_UNCONNECTED:	return "ERROR UNCONNECTED";
+		case SPI_ERROR_CURSOR:		return "ERROR CURSOR";
+		case SPI_ERROR_ARGUMENT:		return "ERROR ARGUMENT";
+		case SPI_ERROR_PARAM:		return "ERROR PARAM";
+		case SPI_ERROR_TRANSACTION:	return "ERROR TRANSACTION";
+		case SPI_ERROR_NOATTRIBUTE:	return "ERROR NOATTRIBUTE";
+		case SPI_ERROR_NOOUTFUNC:	return "ERROR NOOUTFUNC";
+		case SPI_ERROR_TYPUNKNOWN:	return "ERROR TYPUNKNOWN";
+
+		case SPI_OK_CONNECT:			return "OK CONNECT";
+		case SPI_OK_FINISH:			return "OK FINISH";
+		case SPI_OK_FETCH:			return "OK FETCH";
+		case SPI_OK_UTILITY:			return "OK UTILITY";
+		case SPI_OK_SELECT:			return "OK SELECT";
+		case SPI_OK_SELINTO:			return "OK SELINTO";
+		case SPI_OK_INSERT:			return "OK INSERT";
+		case SPI_OK_DELETE:			return "OK DELETE";
+		case SPI_OK_UPDATE:			return "OK UPDATE";
+		case SPI_OK_CURSOR:			return "OK CURSOR";
+		case SPI_OK_INSERT_RETURNING: return "OK INSERT_RETURNING";
+		case SPI_OK_DELETE_RETURNING: return "OK DELETE_RETURNING";
+		case SPI_OK_UPDATE_RETURNING: return "OK UPDATE_RETURNING";
+		case SPI_OK_REWRITTEN:		return "OK REWRITTEN";
+
+		default:
+			return	"undefined code";
+	}
+
+	return	"undefined code";
+}
+
+/*
+ * serializeRequestParametersWithCallback
+ *  serialize request parameters using specified callback
+ */
+static void
+serializeRequestWithCallback(WWWFdwOptions *opts, ForeignScanState *node, StringInfoData *url)
+{
+	int	res;
+	StringInfoData	cmd;
+	Datum	values[1];
+	Oid		argtypes[1]	= { getWWWFdwOptionsOid() };
+	char*	options[]	= {
+		opts->uri,
+		opts->uri_select,
+		opts->uri_insert,
+		opts->uri_delete,
+		opts->uri_update,
+		opts->uri_callback,
+
+		opts->method_select,
+		opts->method_insert,
+		opts->method_delete,
+		opts->method_update,
+
+		opts->request_serialize_callback,
+
+		opts->response_type,
+		opts->response_deserialize_callback,
+		opts->response_iterate_callback
+	};
+
+	SPI_init();
+
+	initStringInfo(&cmd);
+	// TODO: add 2nd parameter - qual converted correspondingly
+	appendStringInfo(&cmd, "SELECT %s($1)", opts->request_serialize_callback);
+
+	/* prepare options for the call */
+	values[0]	= HeapTupleGetDatum( BuildTupleFromCStrings(WWWFdwOptionsAIM, options) );
+
+	//res	= SPI_execute(opts->request_serialize_callback, true, 0);
+	res	= SPI_execute_with_args(cmd.data, 1, argtypes, values, NULL, true, 0);
+	if(0 > res)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("can't spi execute: %i (%s)", res, describeSPIcode(res))
+			)
+		);
+	}
+	else
+	{
+		// TODO: process results
+		//SPI_tuptable->vals->
+	}
+}
+
 /*
  * serializeRequestParameters
  *  serialize column=value sql conditions into column=value get parameters
@@ -423,10 +545,14 @@ serializeRequestParameters(ForeignScanState* node, StringInfoData *url)
 
 			char *param = wwwParam((Node *) state->expr,
 							node->ss.ss_currentRelation->rd_att);
+
 			if (param)
 			{
 				if (param_first)
+				{
 					appendStringInfoChar(url, '?');
+					param_first	= false;
+				}
 				else
 					appendStringInfoChar(url, '&');
 				appendStringInfoString(url, param);
@@ -439,6 +565,7 @@ serializeRequestParameters(ForeignScanState* node, StringInfoData *url)
 		}
 	}
 }
+
 /*
  * wwwBegin
  *   Query search API and setup result
@@ -474,7 +601,9 @@ wwwBegin(ForeignScanState *node, int eflags)
 	if(opts.request_serialize_callback)
 	{
 		/* call specified callback for forming request */
-		serializeRequest(url, opts, node, &url2, &struct4otherParams);
+		/* TODO */
+		/* serializeRequestWithCallback(&opts, node, &url, &struct4otherParams); */
+		serializeRequestWithCallback(&opts, node, &url);
 	}
 	else
 	{
@@ -848,4 +977,71 @@ getOptions(Oid foreigntableid, WWWFdwOptions *opts)
 			(errcode(ERRCODE_SYNTAX_ERROR),
 			errmsg("At least uri option must be specified")
 			));
+}
+
+static
+Oid
+getWWWFdwOptionsOid(void)
+{
+	if(0 == WWWFdwOptionsOid) {
+		Datum	data[1];
+		bool	isnull[1]	= {false};
+		int		res;
+
+		SPI_init();
+
+		res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwoptions'", true, 0);
+		if(0 > res)
+		{
+			ereport(ERROR,
+				(
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("can't identify WWWFdwOptions OID: %i (%s)", res, describeSPIcode(res))
+				)
+			);
+		}
+
+		if(1 == SPI_processed)
+		{
+			heap_deform_tuple(*(SPI_tuptable->vals), SPI_tuptable->tupdesc, data, isnull);
+			elog(DEBUG1, "Oid: %d",(int)data[0]);
+			WWWFdwOptionsOid	= (Oid)(data[0]);
+
+			WWWFdwOptionsTupleDesc	= TypeGetTupleDesc(WWWFdwOptionsOid, NIL);
+			WWWFdwOptionsAIM		= TupleDescGetAttInMetadata(WWWFdwOptionsTupleDesc);
+		}
+		else
+		{
+			ereport(ERROR,
+				(
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("can't identify WWWFdwOptions OID: not exactly 1 result was returned (%d)", SPI_processed)
+				)
+			);
+		}
+	}
+
+	return	WWWFdwOptionsOid;
+}
+
+/* wrapper for init code, not to duplicate it */
+static
+void
+SPI_init(void)
+{
+	if(!SPI_inited)
+	{
+		int	res	= SPI_connect();
+		if(SPI_OK_CONNECT != res)
+		{
+			ereport(ERROR,
+				(
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("Can't spi connect: %i (%s)", res, describeSPIcode(res))
+				)
+			);
+		}
+
+		SPI_inited	= true;
+	}
 }
