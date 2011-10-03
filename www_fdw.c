@@ -25,11 +25,11 @@
 
 PG_MODULE_MAGIC;
 
-bool	SPI_inited	= false;
+bool	spi_inited	= false;
 /* wrapper for init code, not to duplicate it */
-static void SPI_init(void);
+static void spi_init(void);
 
-struct WWWFdwOption
+struct WWW_fdw_option
 {
 	const char	*optname;
 	Oid		optcontext;	/* Oid of catalog in which option may appear */
@@ -39,7 +39,7 @@ struct WWWFdwOption
  * Valid options for this extension.
  *
  */
-static struct WWWFdwOption valid_options[] =
+static struct WWW_fdw_option valid_options[] =
 {
 	{ "uri",		ForeignServerRelationId },
 	{ "uri_select",	ForeignServerRelationId },
@@ -63,7 +63,7 @@ static struct WWWFdwOption valid_options[] =
 	{ NULL,			InvalidOid }
 };
 
-typedef struct	WWWFdwOptions
+typedef struct	WWW_fdw_options
 {
 	char*	uri;
 	char*	uri_select;
@@ -79,12 +79,12 @@ typedef struct	WWWFdwOptions
 	char*	response_type;
 	char*	response_deserialize_callback;
 	char*	response_iterate_callback;
-} WWWFdwOptions;
+} WWW_fdw_options;
 
-Oid	WWWFdwOptionsOid	= 0;
+Oid	www_fdw_options_oid	= 0;
 /* DEBUG check if all needed */
-TupleDesc	WWWFdwOptionsTupleDesc;
-AttInMetadata*	WWWFdwOptionsAIM;
+TupleDesc	www_fdw_options_tuple_desc;
+AttInMetadata*	www_fdw_options_aim;
 /* used to initialize OID above and return, basically wrapper for init code */
 static Oid get_www_fdw_options_oid(void);
 
@@ -126,7 +126,7 @@ typedef struct WWWReply
 } WWWReply;
 
 static bool www_is_valid_option(const char *option, Oid context);
-static void get_options(Oid foreigntableid, WWWFdwOptions *opts);
+static void get_options(Oid foreigntableid, WWW_fdw_options *opts);
 
 /*
  * SQL functions
@@ -202,7 +202,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 
 		if (!www_is_valid_option(def->defname, catalog))
 		{
-			struct WWWFdwOption *opt;
+			struct WWW_fdw_option *opt;
 			StringInfoData buf;
 
 			/*
@@ -266,7 +266,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 static bool
 www_is_valid_option(const char *option, Oid context)
 {
-	struct WWWFdwOption *opt;
+	struct WWW_fdw_option *opt;
 
 	for (opt = valid_options; opt->optname; opt++)
 	{
@@ -472,7 +472,7 @@ describe_spi_code(int code)
  *  serialize request parameters using specified callback
  */
 static void
-serialize_request_with_callback(WWWFdwOptions *opts, ForeignScanState *node, StringInfoData *url)
+serialize_request_with_callback(WWW_fdw_options *opts, ForeignScanState *node, StringInfoData *url)
 {
 	int	res;
 	StringInfoData	cmd;
@@ -498,14 +498,14 @@ serialize_request_with_callback(WWWFdwOptions *opts, ForeignScanState *node, Str
 		opts->response_iterate_callback
 	};
 
-	SPI_init();
+	spi_init();
 
 	initStringInfo(&cmd);
 	// TODO: add 2nd parameter - qual converted correspondingly
 	appendStringInfo(&cmd, "SELECT %s($1)", opts->request_serialize_callback);
 
 	/* prepare options for the call */
-	values[0]	= HeapTupleGetDatum( BuildTupleFromCStrings(WWWFdwOptionsAIM, options) );
+	values[0]	= HeapTupleGetDatum( BuildTupleFromCStrings(www_fdw_options_aim, options) );
 
 	//res	= SPI_execute(opts->request_serialize_callback, true, 0);
 	res	= SPI_execute_with_args(cmd.data, 1, argtypes, values, NULL, true, 0);
@@ -573,7 +573,7 @@ serialize_request_parameters(ForeignScanState* node, StringInfoData *url)
 static void
 www_begin(ForeignScanState *node, int eflags)
 {
-	WWWFdwOptions	opts;
+	WWW_fdw_options	opts;
 	CURL		   *curl;
 	int				ret;
 	StringInfoData	url;
@@ -877,7 +877,7 @@ append(void *structure, char *key, uint32_t key_length, void *obj)
  * Fetch the options for a mysql_fdw foreign table.
  */
 static void
-get_options(Oid foreigntableid, WWWFdwOptions *opts)
+get_options(Oid foreigntableid, WWW_fdw_options *opts)
 {
 	ForeignTable	*f_table;
 	ForeignServer	*f_server;
@@ -983,12 +983,12 @@ static
 Oid
 get_www_fdw_options_oid(void)
 {
-	if(0 == WWWFdwOptionsOid) {
+	if(0 == www_fdw_options_oid) {
 		Datum	data[1];
 		bool	isnull[1]	= {false};
 		int		res;
 
-		SPI_init();
+		spi_init();
 
 		res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwoptions'", true, 0);
 		if(0 > res)
@@ -996,7 +996,7 @@ get_www_fdw_options_oid(void)
 			ereport(ERROR,
 				(
 					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("can't identify WWWFdwOptions OID: %i (%s)", res, describe_spi_code(res))
+					errmsg("can't identify WWW_fdw_options OID: %i (%s)", res, describe_spi_code(res))
 				)
 			);
 		}
@@ -1005,31 +1005,31 @@ get_www_fdw_options_oid(void)
 		{
 			heap_deform_tuple(*(SPI_tuptable->vals), SPI_tuptable->tupdesc, data, isnull);
 			elog(DEBUG1, "Oid: %d",(int)data[0]);
-			WWWFdwOptionsOid	= (Oid)(data[0]);
+			www_fdw_options_oid	= (Oid)(data[0]);
 
-			WWWFdwOptionsTupleDesc	= TypeGetTupleDesc(WWWFdwOptionsOid, NIL);
-			WWWFdwOptionsAIM		= TupleDescGetAttInMetadata(WWWFdwOptionsTupleDesc);
+			www_fdw_options_tuple_desc	= TypeGetTupleDesc(www_fdw_options_oid, NIL);
+			www_fdw_options_aim			= TupleDescGetAttInMetadata(www_fdw_options_tuple_desc);
 		}
 		else
 		{
 			ereport(ERROR,
 				(
 					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("can't identify WWWFdwOptions OID: not exactly 1 result was returned (%d)", SPI_processed)
+					errmsg("can't identify WWW_fdw_options OID: not exactly 1 result was returned (%d)", SPI_processed)
 				)
 			);
 		}
 	}
 
-	return	WWWFdwOptionsOid;
+	return	www_fdw_options_oid;
 }
 
 /* wrapper for init code, not to duplicate it */
 static
 void
-SPI_init(void)
+spi_init(void)
 {
-	if(!SPI_inited)
+	if(!spi_inited)
 	{
 		int	res	= SPI_connect();
 		if(SPI_OK_CONNECT != res)
@@ -1042,6 +1042,6 @@ SPI_init(void)
 			);
 		}
 
-		SPI_inited	= true;
+		spi_inited	= true;
 	}
 }
