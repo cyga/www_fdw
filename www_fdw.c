@@ -86,7 +86,7 @@ Oid	WWWFdwOptionsOid	= 0;
 TupleDesc	WWWFdwOptionsTupleDesc;
 AttInMetadata*	WWWFdwOptionsAIM;
 /* used to initialize OID above and return, basically wrapper for init code */
-static Oid getWWWFdwOptionsOid(void);
+static Oid get_www_fdw_options_oid(void);
 
 /* TODO: understand which result we will have */
 typedef struct ResultRoot
@@ -125,8 +125,8 @@ typedef struct WWWReply
 	char		   *q;
 } WWWReply;
 
-static bool wwwIsValidOption(const char *option, Oid context);
-static void getOptions(Oid foreigntableid, WWWFdwOptions *opts);
+static bool www_is_valid_option(const char *option, Oid context);
+static void get_options(Oid foreigntableid, WWWFdwOptions *opts);
 
 /*
  * SQL functions
@@ -140,14 +140,14 @@ PG_FUNCTION_INFO_V1(www_fdw_validator);
 /*
  * FDW callback routines
  */
-static FdwPlan *wwwPlan(Oid foreigntableid,
+static FdwPlan *www_plan(Oid foreigntableid,
 						PlannerInfo *root,
 						RelOptInfo *baserel);
-static void wwwExplain(ForeignScanState *node, ExplainState *es);
-static void wwwBegin(ForeignScanState *node, int eflags);
-static TupleTableSlot *wwwIterate(ForeignScanState *node);
-static void wwwReScan(ForeignScanState *node);
-static void wwwEnd(ForeignScanState *node);
+static void www_explain(ForeignScanState *node, ExplainState *es);
+static void www_begin(ForeignScanState *node, int eflags);
+static TupleTableSlot *www_iterate(ForeignScanState *node);
+static void www_rescan(ForeignScanState *node);
+static void www_end(ForeignScanState *node);
 
 static size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp);
 static void *create_structure(int nesting, int is_object);
@@ -200,7 +200,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 	{
 		DefElem	   *def = (DefElem *) lfirst(cell);
 
-		if (!wwwIsValidOption(def->defname, catalog))
+		if (!www_is_valid_option(def->defname, catalog))
 		{
 			struct WWWFdwOption *opt;
 			StringInfoData buf;
@@ -264,7 +264,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
  * context is the Oid of the catalog holding the object the option is for.
  */
 static bool
-wwwIsValidOption(const char *option, Oid context)
+www_is_valid_option(const char *option, Oid context)
 {
 	struct WWWFdwOption *opt;
 
@@ -285,12 +285,12 @@ www_fdw_handler(PG_FUNCTION_ARGS)
 	 * Anything except Begin/Iterate is blank so far,
 	 * but FDW interface assumes all valid function pointers.
 	 */
-	fdwroutine->PlanForeignScan = wwwPlan;
-	fdwroutine->ExplainForeignScan = wwwExplain;
-	fdwroutine->BeginForeignScan = wwwBegin;
-	fdwroutine->IterateForeignScan = wwwIterate;
-	fdwroutine->ReScanForeignScan = wwwReScan;
-	fdwroutine->EndForeignScan = wwwEnd;
+	fdwroutine->PlanForeignScan = www_plan;
+	fdwroutine->ExplainForeignScan = www_explain;
+	fdwroutine->BeginForeignScan = www_begin;
+	fdwroutine->IterateForeignScan = www_iterate;
+	fdwroutine->ReScanForeignScan = www_rescan;
+	fdwroutine->EndForeignScan = www_end;
 
 	PG_RETURN_POINTER(fdwroutine);
 }
@@ -342,13 +342,13 @@ percent_encode(unsigned char *s, int srclen)
 }
 
 /*
- * wwwParam
+ * www_param
  *  check and create column=value string for column=value criteria in query
  *  raise error for operators differ from '='
  *  raise error for operators with not 2 arguments
  */
 static char *
-wwwParam(Node *node, TupleDesc tupdesc)
+www_param(Node *node, TupleDesc tupdesc)
 {
 	if (node == NULL)
 		return NULL;
@@ -403,11 +403,11 @@ wwwParam(Node *node, TupleDesc tupdesc)
 }
 
 /*
- * wwwPlan
+ * www_plan
  *   Create a FdwPlan, which is empty for now.
  */
 static FdwPlan *
-wwwPlan(Oid foreigntableid, PlannerInfo *root, RelOptInfo *baserel)
+www_plan(Oid foreigntableid, PlannerInfo *root, RelOptInfo *baserel)
 {
 	FdwPlan	   *fdwplan;
 
@@ -418,18 +418,18 @@ wwwPlan(Oid foreigntableid, PlannerInfo *root, RelOptInfo *baserel)
 }
 
 /*
- * wwwExplain
+ * www_explain
  *   Produce extra output for EXPLAIN
  */
 static void
-wwwExplain(ForeignScanState *node, ExplainState *es)
+www_explain(ForeignScanState *node, ExplainState *es)
 {
 	ExplainPropertyText("WWW API", "Request", es);
 }
 
 static
 char*
-describeSPIcode(int code)
+describe_spi_code(int code)
 {
 	switch(code)
 	{
@@ -468,16 +468,16 @@ describeSPIcode(int code)
 }
 
 /*
- * serializeRequestParametersWithCallback
+ * serialize_request_parametersWithCallback
  *  serialize request parameters using specified callback
  */
 static void
-serializeRequestWithCallback(WWWFdwOptions *opts, ForeignScanState *node, StringInfoData *url)
+serialize_request_with_callback(WWWFdwOptions *opts, ForeignScanState *node, StringInfoData *url)
 {
 	int	res;
 	StringInfoData	cmd;
 	Datum	values[1];
-	Oid		argtypes[1]	= { getWWWFdwOptionsOid() };
+	Oid		argtypes[1]	= { get_www_fdw_options_oid() };
 	char*	options[]	= {
 		opts->uri,
 		opts->uri_select,
@@ -514,7 +514,7 @@ serializeRequestWithCallback(WWWFdwOptions *opts, ForeignScanState *node, String
 		ereport(ERROR,
 			(
 				errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("can't spi execute: %i (%s)", res, describeSPIcode(res))
+				errmsg("can't spi execute: %i (%s)", res, describe_spi_code(res))
 			)
 		);
 	}
@@ -526,12 +526,12 @@ serializeRequestWithCallback(WWWFdwOptions *opts, ForeignScanState *node, String
 }
 
 /*
- * serializeRequestParameters
+ * serialize_request_parameters
  *  serialize column=value sql conditions into column=value get parameters
  *  column & value are url encoded
  */
 static void
-serializeRequestParameters(ForeignScanState* node, StringInfoData *url)
+serialize_request_parameters(ForeignScanState* node, StringInfoData *url)
 {
 	if (node->ss.ps.plan->qual)
 	{
@@ -543,7 +543,7 @@ serializeRequestParameters(ForeignScanState* node, StringInfoData *url)
 		{
 			ExprState	   *state = lfirst(lc);
 
-			char *param = wwwParam((Node *) state->expr,
+			char *param = www_param((Node *) state->expr,
 							node->ss.ss_currentRelation->rd_att);
 
 			if (param)
@@ -567,11 +567,11 @@ serializeRequestParameters(ForeignScanState* node, StringInfoData *url)
 }
 
 /*
- * wwwBegin
+ * www_begin
  *   Query search API and setup result
  */
 static void
-wwwBegin(ForeignScanState *node, int eflags)
+www_begin(ForeignScanState *node, int eflags)
 {
 	WWWFdwOptions	opts;
 	CURL		   *curl;
@@ -593,7 +593,7 @@ wwwBegin(ForeignScanState *node, int eflags)
 	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
 		return;
 
-	getOptions( RelationGetRelid(node->ss.ss_currentRelation), &opts );
+	get_options( RelationGetRelid(node->ss.ss_currentRelation), &opts );
 
 	initStringInfo(&url);
 	appendStringInfo(&url, "%s%s", opts.uri, opts.uri_select);
@@ -602,12 +602,12 @@ wwwBegin(ForeignScanState *node, int eflags)
 	{
 		/* call specified callback for forming request */
 		/* TODO */
-		/* serializeRequestWithCallback(&opts, node, &url, &struct4otherParams); */
-		serializeRequestWithCallback(&opts, node, &url);
+		/* serialize_request_with_callback(&opts, node, &url, &struct4otherParams); */
+		serialize_request_with_callback(&opts, node, &url);
 	}
 	else
 	{
-		serializeRequestParameters(node, &url);
+		serialize_request_parameters(node, &url);
 	}
 
 	elog(DEBUG1, "url for request: '%s'", url.data);
@@ -659,11 +659,11 @@ wwwBegin(ForeignScanState *node, int eflags)
 }
 
 /*
- * wwwIterate
+ * www_iterate
  *   Return a www per call
  */
 static TupleTableSlot *
-wwwIterate(ForeignScanState *node)
+www_iterate(ForeignScanState *node)
 {
 	TupleTableSlot	   *slot = node->ss.ss_ScanTupleSlot;
 	WWWReply	   *reply = (WWWReply *) node->fdw_state;
@@ -722,10 +722,10 @@ wwwIterate(ForeignScanState *node)
 }
 
 /*
- * wwwReScan
+ * www_rescan
  */
 static void
-wwwReScan(ForeignScanState *node)
+www_rescan(ForeignScanState *node)
 {
 	WWWReply	   *reply = (WWWReply *) node->fdw_state;
 
@@ -733,7 +733,7 @@ wwwReScan(ForeignScanState *node)
 }
 
 static void
-wwwEnd(ForeignScanState *node)
+www_end(ForeignScanState *node)
 {
 	/* intentionally left blank */
 }
@@ -877,7 +877,7 @@ append(void *structure, char *key, uint32_t key_length, void *obj)
  * Fetch the options for a mysql_fdw foreign table.
  */
 static void
-getOptions(Oid foreigntableid, WWWFdwOptions *opts)
+get_options(Oid foreigntableid, WWWFdwOptions *opts)
 {
 	ForeignTable	*f_table;
 	ForeignServer	*f_server;
@@ -981,7 +981,7 @@ getOptions(Oid foreigntableid, WWWFdwOptions *opts)
 
 static
 Oid
-getWWWFdwOptionsOid(void)
+get_www_fdw_options_oid(void)
 {
 	if(0 == WWWFdwOptionsOid) {
 		Datum	data[1];
@@ -996,7 +996,7 @@ getWWWFdwOptionsOid(void)
 			ereport(ERROR,
 				(
 					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("can't identify WWWFdwOptions OID: %i (%s)", res, describeSPIcode(res))
+					errmsg("can't identify WWWFdwOptions OID: %i (%s)", res, describe_spi_code(res))
 				)
 			);
 		}
@@ -1037,7 +1037,7 @@ SPI_init(void)
 			ereport(ERROR,
 				(
 					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("Can't spi connect: %i (%s)", res, describeSPIcode(res))
+					errmsg("Can't spi connect: %i (%s)", res, describe_spi_code(res))
 				)
 			);
 		}
