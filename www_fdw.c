@@ -22,10 +22,10 @@
 
 #include "curl/curl.h"
 #include "libjson-0.8/json.h"
+#include "json_parser.h"
 
 PG_MODULE_MAGIC;
 
-bool	spi_inited	= false;
 /* wrapper for init code, not to duplicate it */
 static void spi_init(void);
 
@@ -88,42 +88,14 @@ AttInMetadata*	www_fdw_options_aim;
 /* used to initialize OID above and return, basically wrapper for init code */
 static Oid get_www_fdw_options_oid(void);
 
-/* TODO: understand which result we will have */
-typedef struct ResultRoot
+typedef struct Reply
 {
-	struct ResultArray	   *results;
-} ResultRoot;
-
-/* TODO: understand which result we will have */
-typedef struct ResultArray
-{
-	int					index;
-	struct Tweet	   *elements[512];
-} ResultArray;
-
-/* TODO: understand which result we will have */
-typedef struct Tweet
-{
-	char	   *id;
-	char	   *text;
-	char	   *from_user;
-	char	   *from_user_id;
-	char	   *to_user;
-	char	   *to_user_id;
-	char	   *iso_language_code;
-	char	   *source;
-	char	   *profile_image_url;
-	char	   *created_at;
-} Tweet;
-
-/* TODO: understand which result we will have */
-typedef struct WWWReply
-{
-	ResultRoot	   *root;
+	void		   *root;
+	void		   *result;
 	AttInMetadata  *attinmeta;
-	int				rownum;
-	char		   *q;
-} WWWReply;
+	int				row_index;
+	WWW_fdw_options	*options;
+} Reply;
 
 static bool www_is_valid_option(const char *option, Oid context);
 static void get_options(Oid foreigntableid, WWW_fdw_options *opts);
@@ -149,11 +121,8 @@ static TupleTableSlot *www_iterate(ForeignScanState *node);
 static void www_rescan(ForeignScanState *node);
 static void www_end(ForeignScanState *node);
 
-static size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp);
-static void *create_structure(int nesting, int is_object);
-static void *create_data(int type, const char *data, uint32_t length);
-static int append(void *structure, char *key, uint32_t key_length, void *obj);
-
+static size_t json_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp);
+static size_t json_write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp);
 
 static bool
 parse_parameter(char* name, char** var, DefElem* param)
@@ -240,8 +209,6 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 				0 != strcmp(response_type, "json")
 				&&
 				0 != strcmp(response_type, "xml")
-				&&
-				0 != strcmp(response_type, "yaml")
 				&&
 				0 != strcmp(response_type, "other")
 			)
@@ -470,6 +437,9 @@ describe_spi_code(int code)
 /*
  * serialize_request_parametersWithCallback
  *  serialize request parameters using specified callback
+ *  TODO:
+ *		1. how to pass quals? create special type for it?
+ *		2. out parameters for: request string and others
  */
 static void
 serialize_request_with_callback(WWW_fdw_options *opts, ForeignScanState *node, StringInfoData *url)
@@ -498,13 +468,13 @@ serialize_request_with_callback(WWW_fdw_options *opts, ForeignScanState *node, S
 		opts->response_iterate_callback
 	};
 
-	spi_init();
-
 	initStringInfo(&cmd);
 	// TODO: add 2nd parameter - qual converted correspondingly
 	appendStringInfo(&cmd, "SELECT %s($1)", opts->request_serialize_callback);
 
 	/* prepare options for the call */
+	www_fdw_options_tuple_desc	= TypeGetTupleDesc(www_fdw_options_oid, NIL);
+	www_fdw_options_aim			= TupleDescGetAttInMetadata(www_fdw_options_tuple_desc);
 	values[0]	= HeapTupleGetDatum( BuildTupleFromCStrings(www_fdw_options_aim, options) );
 
 	//res	= SPI_execute(opts->request_serialize_callback, true, 0);
@@ -514,7 +484,7 @@ serialize_request_with_callback(WWW_fdw_options *opts, ForeignScanState *node, S
 		ereport(ERROR,
 			(
 				errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("can't spi execute: %i (%s)", res, describe_spi_code(res))
+				errmsg("Can't spi execute: %i (%s)", res, describe_spi_code(res))
 			)
 		);
 	}
@@ -567,25 +537,100 @@ serialize_request_parameters(ForeignScanState* node, StringInfoData *url)
 }
 
 /*
+ * json_check_result_array
+ *	currently checks all elements to be objects
+*/
+static
+bool
+json_check_result_array(JSONNode* root)
+{
+	int	i;
+
+	for( i=0; i<root->length; i++ )
+		if(JSON_OBJECT_BEGIN != root->val.val_array[i].type)
+			return	false;
+
+	return	true;
+}
+
+/*
+ * json_get_result_array_in_tree
+ *	find the result array in json response structure
+ *	check json_check_result_array for valid array description
+*/
+static
+JSONNode*
+json_get_result_array_in_tree(JSONNode* root)
+{
+	JSONNode*	suspect	= NULL;
+	List		*curr	= list_make1(root),
+				*next	= NULL;
+	ListCell*	cell;
+	int			i;
+
+	while(curr) {
+		foreach(cell, curr)
+		{
+			suspect	= (JSONNode*)(cell->data.ptr_value);
+			switch (suspect->type)
+			{
+				case JSON_OBJECT_BEGIN:
+					for( i=0; i<suspect->length; i++ )
+						next	= lappend( next, (void*)(&(suspect->val.val_object[i])) );
+					break;
+				case JSON_ARRAY_BEGIN:
+					/* check array to be valid answer */
+					if(json_check_result_array(suspect))
+					{
+						list_free(curr);
+						list_free(next);
+						return	suspect;
+					}
+					for( i=0; i<suspect->length; i++ )
+						next	= lappend( next, (void*)(&(suspect->val.val_array[i])) );
+					break;
+				case JSON_STRING:
+				case JSON_INT:
+				case JSON_FLOAT:
+				case JSON_NULL:
+				case JSON_TRUE:
+				case JSON_FALSE:
+					break;
+				/* for removing warning */
+				case JSON_NONE:
+				case JSON_KEY:
+				case JSON_ARRAY_END:
+				case JSON_OBJECT_END:
+					break;
+			}
+		}
+
+		list_free(curr);
+		curr	= next;
+		next	= NULL;
+	}
+
+	return	NULL;
+}
+
+/*
  * www_begin
  *   Query search API and setup result
  */
 static void
 www_begin(ForeignScanState *node, int eflags)
 {
-	WWW_fdw_options	opts;
-	CURL		   *curl;
-	int				ret;
+	WWW_fdw_options	*opts;
+	CURL			*curl;
+	char			curl_error_buffer[CURL_ERROR_SIZE+1]	= {0};
+	CURLcode		ret;
 	StringInfoData	url;
-
-	/* TODO: old, to check/update/delete */
-	json_parser		parser;
-	json_parser_dom helper;
-	ResultRoot	   *root;
+	json_parser		json_parserr;
+	json_parser_dom json_dom;
+	StringInfoData	json_buffer;
 	Relation		rel;
-	AttInMetadata  *attinmeta;
-	WWWReply   *reply;
-	char* param_q	= NULL;
+	AttInMetadata	*attinmeta;
+	Reply			*reply;
 
 	/*
 	 * Do nothing in EXPLAIN
@@ -593,131 +638,257 @@ www_begin(ForeignScanState *node, int eflags)
 	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
 		return;
 
-	get_options( RelationGetRelid(node->ss.ss_currentRelation), &opts );
+	spi_init();
+
+	opts	= (WWW_fdw_options*)palloc(sizeof(WWW_fdw_options));
+	get_options( RelationGetRelid(node->ss.ss_currentRelation), opts );
 
 	initStringInfo(&url);
-	appendStringInfo(&url, "%s%s", opts.uri, opts.uri_select);
+	appendStringInfo(&url, "%s%s", opts->uri, opts->uri_select);
 
-	if(opts.request_serialize_callback)
+	if(opts->request_serialize_callback)
 	{
 		/* call specified callback for forming request */
 		/* TODO */
-		/* serialize_request_with_callback(&opts, node, &url, &struct4otherParams); */
-		serialize_request_with_callback(&opts, node, &url);
+		/* serialize_request_with_callback(opts, node, &url, &struct4otherParams); */
+		serialize_request_with_callback(opts, node, &url);
 	}
 	else
 	{
 		serialize_request_parameters(node, &url);
 	}
 
-	elog(DEBUG1, "url for request: '%s'", url.data);
+	elog(DEBUG1, "Url for request: '%s'", url.data);
 
-	elog(ERROR, "TODO: not implemented yet");
-
-	/* TODO prepare parsers */
-	if( 0 == strcmp(opts.response_type, "json") )
-	{
-		json_parser_dom_init(&helper, create_structure, create_data, append);
-		json_parser_init(&parser, NULL, json_parser_dom_callback, &helper);
-	}
-	else if( 0 == strcmp(opts.response_type, "xml") )
-	{
-	}
-	else if( 0 == strcmp(opts.response_type, "yaml") )
-	{
-	}
-	else if( 0 == strcmp(opts.response_type, "other") )
-	{
-	}
-
-	elog(DEBUG1, "requesting %s", url.data);
 	/* TODO interacting with the server */
 	curl = curl_easy_init();
 	curl_easy_setopt(curl, CURLOPT_URL, url.data);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &parser);
+	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error_buffer);
+
+	/* prepare parsers */
+	if( 0 == strcmp(opts->response_type, "json") )
+	{
+		if(opts->response_deserialize_callback)
+		{
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, json_write_data_to_buffer);
+			initStringInfo(&json_buffer);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &json_buffer);
+		}
+		else
+		{
+			json_parser_init2(&json_parserr, &json_dom);
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, json_write_data_to_parser);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &json_parserr);
+		}
+	}
+	else if( 0 == strcmp(opts->response_type, "xml") )
+	{
+		/* TODO */
+	}
+	else if( 0 == strcmp(opts->response_type, "other") )
+	{
+		/* TODO */
+	}
+	else
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_SYNTAX_ERROR),
+			errmsg("Invalid value for response_type option: %s", opts->response_type)
+			));
+	}
+
 	ret = curl_easy_perform(curl);
 	curl_easy_cleanup(curl);
+	if(ret) {
+		ereport(ERROR,
+			(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+			errmsg("Can't get a response from server: %s", curl_error_buffer)
+			));
+	}
 
-	rel = node->ss.ss_currentRelation;
-	attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
+	/* process parsed results */
+	if( 0 == strcmp(opts->response_type, "json") )
+	{
+		if(opts->response_deserialize_callback)
+		{
+			/* TODO
+			 *	call callback with accumulated json response
+			 *	save returned set of records,
+			 *	for further iterating them in iterate routine
+			*/
+		}
+		else
+		{
+			/* get result in parsed response tree
+			 * and save it for further processing in results iterations
+			*/
 
-	root = (ResultRoot *) helper.root_structure;
+			JSONNode	*root	= json_result_tree(&json_parserr),
+						*result;
 
-	/* status != 200, or other similar error */
-	if (!root)
-		elog(INFO, "Failed fetching response from %s", url.data);
+			if(!root)
+				ereport(ERROR,
+					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+					errmsg("Can't parse server's json response, parser error code: %i", ret)
+					));
 
-	reply = (WWWReply *) palloc(sizeof(WWWReply));
-	reply->root = root;
-	reply->attinmeta = attinmeta;
-	reply->rownum = 0;
-	reply->q = param_q;
-	node->fdw_state = (void *) reply;
+			elog(DEBUG1, "JSON response was parsed");
 
-	json_parser_free(&parser);
+			result	= json_get_result_array_in_tree(root);
+			if(!result)
+				ereport(ERROR,
+					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+					errmsg("Can't find result in parsed server's json response")
+					));
+
+			elog(DEBUG1, "Result array was found in json response");
+
+			rel = node->ss.ss_currentRelation;
+			attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
+
+			/* save result */
+			reply = (Reply*)palloc(sizeof(Reply));
+			reply->root = root;
+			reply->result = result;
+			reply->attinmeta = attinmeta;
+			reply->row_index = 0;
+			reply->options = opts;
+			node->fdw_state = (void *) reply;
+
+			json_parser_free(&json_parserr);
+
+			/* TODO: where to free up json parsed tree?
+			 * rewrite it using palloc?
+			*/
+			/*json_free_tree(root);*/
+		}
+	}
+	else if( 0 == strcmp(opts->response_type, "xml") )
+	{
+		/* TODO */
+	}
+	else if( 0 == strcmp(opts->response_type, "other") )
+	{
+		/* TODO */
+	}
+}
+
+static
+char*
+json2string(JSONNode* json)
+{
+	StringInfoData buf;
+
+	switch (json->type)
+	{
+		case JSON_OBJECT_BEGIN:
+		case JSON_ARRAY_BEGIN:
+			return	NULL;
+			break;
+		case JSON_STRING:
+			return	json->val.val_string;
+		case JSON_INT:
+			initStringInfo(&buf);
+			appendStringInfo(&buf, "%i", json->val.val_int);
+			return	buf.data;
+		case JSON_FLOAT:
+			initStringInfo(&buf);
+			appendStringInfo(&buf, "%f", json->val.val_float);
+			return	buf.data;
+		case JSON_NULL:
+			return	"null";
+		case JSON_TRUE:
+			return	"true";
+		case JSON_FALSE:
+			return	"false";
+		/* for removing warning */
+		case JSON_NONE:
+		case JSON_KEY:
+		case JSON_ARRAY_END:
+		case JSON_OBJECT_END:
+			break;
+	}
+	return	NULL;
 }
 
 /*
  * www_iterate
- *   Return a www per call
+ *   return row per each call
  */
 static TupleTableSlot *
 www_iterate(ForeignScanState *node)
 {
-	TupleTableSlot	   *slot = node->ss.ss_ScanTupleSlot;
-	WWWReply	   *reply = (WWWReply *) node->fdw_state;
-	ResultRoot		   *root = reply->root;
-	Tweet			   *tweet;
-	HeapTuple			tuple;
-	Relation			rel = node->ss.ss_currentRelation;
-	int					i, natts;
-	char			  **values;
-	MemoryContext		oldcontext;
+	TupleTableSlot	*slot	= node->ss.ss_ScanTupleSlot;
+	Reply			*reply	= (Reply*)node->fdw_state;
+	HeapTuple		tuple;
+	Relation		rel = node->ss.ss_currentRelation;
+	int				i,j, natts;
+	char			**values;
+	MemoryContext	oldcontext;
+	JSONNode		obj;
 
-	if (!root || !(root->results && reply->rownum < root->results->index))
+	if( 0 == strcmp(reply->options->response_type, "json") )
 	{
-		ExecClearTuple(slot);
+		JSONNode	*root	= (JSONNode*)reply->root,
+					*result	= (JSONNode*)reply->result;
+
+		/* no results or results finished */
+		if(!root || !result || !(reply->row_index < result->length))
+		{
+			ExecClearTuple(slot);
+			return slot;
+		}
+
+		obj = result->val.val_array[reply->row_index++];
+		natts = rel->rd_att->natts;
+		values = (char **) palloc(sizeof(char *) * natts);
+		for (i = 0; i < natts; i++)
+		{
+			Name	attname = &rel->rd_att->attrs[i]->attname;
+
+			for( j=0; j<obj.length; j++ )
+				if(0 == namestrcmp(attname, obj.val.val_object[j].key))
+					break;
+
+			if(j < obj.length)
+			{
+				values[i]	= json2string(&(obj.val.val_object[j]));
+			}
+			else
+			{
+				values[i]	= NULL;
+			}
+		}
+		oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
+		tuple = BuildTupleFromCStrings(reply->attinmeta, values);
+		MemoryContextSwitchTo(oldcontext);
+		ExecStoreTuple(tuple, slot, InvalidBuffer, true);
+
 		return slot;
 	}
-	tweet = root->results->elements[reply->rownum];
-	natts = rel->rd_att->natts;
-	values = (char **) palloc(sizeof(char *) * natts);
-	for (i = 0; i < natts; i++)
+	else if( 0 == strcmp(reply->options->response_type, "xml") )
 	{
-		Name	attname = &rel->rd_att->attrs[i]->attname;
-
-		if (namestrcmp(attname, "id") == 0 && tweet->id)
-			values[i] = tweet->id;
-		else if (namestrcmp(attname, "text") == 0 && tweet->text)
-			values[i] = tweet->text;
-		else if (namestrcmp(attname, "from_user") == 0 && tweet->from_user)
-			values[i] = tweet->from_user;
-		else if (namestrcmp(attname, "from_user_id") == 0 && tweet->from_user_id)
-			values[i] = tweet->from_user_id;
-		else if (namestrcmp(attname, "to_user") == 0 && tweet->to_user)
-			values[i] = tweet->to_user;
-		else if (namestrcmp(attname, "to_user_id") == 0 && tweet->to_user_id)
-			values[i] = tweet->to_user_id;
-		else if (namestrcmp(attname, "iso_language_code") == 0 && tweet->iso_language_code)
-			values[i] = tweet->iso_language_code;
-		else if (namestrcmp(attname, "source") == 0 && tweet->source)
-			values[i] = tweet->source;
-		else if (namestrcmp(attname, "profile_image_url") == 0 && tweet->profile_image_url)
-			values[i] = tweet->profile_image_url;
-		else if (namestrcmp(attname, "created_at") == 0 && tweet->created_at)
-			values[i] = tweet->created_at;
-		else if (namestrcmp(attname, "q") == 0)
-			values[i] = reply->q;
-		else
-			values[i] = NULL;
+		/* TODO */
 	}
-	oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
-	tuple = BuildTupleFromCStrings(reply->attinmeta, values);
-	MemoryContextSwitchTo(oldcontext);
-	ExecStoreTuple(tuple, slot, InvalidBuffer, true);
-	reply->rownum++;
+	else if( 0 == strcmp(reply->options->response_type, "other") )
+	{
+		/* TODO */
+	}
+	else
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_SYNTAX_ERROR),
+			errmsg("Invalid value for response_type option: %s", reply->options->response_type)
+			));
+	}
 
+	ereport(ERROR,
+		(errcode(ERRCODE_SYNTAX_ERROR),
+		errmsg("Invalid code branch launched")
+		));
+
+	/* remove warning */
+	ExecClearTuple(slot);
 	return slot;
 }
 
@@ -727,9 +898,8 @@ www_iterate(ForeignScanState *node)
 static void
 www_rescan(ForeignScanState *node)
 {
-	WWWReply	   *reply = (WWWReply *) node->fdw_state;
-
-	reply->rownum = 0;
+	Reply	   *reply = (Reply *) node->fdw_state;
+	reply->row_index	= 0;
 }
 
 static void
@@ -738,139 +908,37 @@ www_end(ForeignScanState *node)
 	/* intentionally left blank */
 }
 
+/*
+ * json_write_data_to_parser
+ *	parse json chunk by chunk
+*/
 static size_t
-write_data(void *buffer, size_t size, size_t nmemb, void *userp)
+json_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp)
 {
 	int			segsize = size * nmemb;
 	json_parser *parser = (json_parser *) userp;
 	int			ret;
 
 	ret = json_parser_string(parser, buffer, segsize, NULL);
-	if (ret){
-		elog(ERROR, "json_parser failed");
-	}
+	if (ret)
+		ereport(ERROR,
+			(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+			errmsg("Can't parser server's json response, parser error code: %i", ret)
+			));
 
 	return segsize;
 }
 
 /*
- * since create_structure() raise error on returning NULL,
- * dummy pointer will be returned if the result can be discarded.
- */
-static void *dummy_p = (void *) "dummy";
-
-static void *
-create_structure(int nesting, int is_object)
+ * json_write_data_to_buffer
+ *	accumulate json response in buffer for further processing
+*/
+static size_t
+json_write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp)
 {
-	if (is_object)
-	{
-		if (nesting == 0)
-		{
-			ResultRoot	   *root;
+	appendBinaryStringInfo((StringInfoData*)userp, buffer, size*nmemb);
 
-			root = (ResultRoot *) palloc0(sizeof(ResultRoot));
-			return (void *) root;
-		}
-		else if (nesting == 2)
-		{
-			Tweet	   *tweet;
-
-			tweet = (Tweet *) palloc0(sizeof(Tweet));
-			return (void *) tweet;
-		}
-		return dummy_p;
-	}
-	else
-	{
-		if (nesting == 1)
-		{
-			ResultArray	   *array;
-
-			array = (ResultArray *) palloc(sizeof(ResultArray));
-			array->index = 0;
-			return array;
-		}
-	}
-
-	return dummy_p;
-}
-
-static void *
-create_data(int type, const char *data, uint32_t length)
-{
-	switch(type)
-	{
-	case JSON_STRING:
-	case JSON_INT:
-	case JSON_FLOAT:
-		return (void *) data;
-
-	case JSON_NULL:
-	case JSON_TRUE:
-	case JSON_FALSE:
-		break;
-	}
-
-	return NULL;
-}
-
-#define TWEETCOPY(structure, key, obj) \
-do{ \
-	Tweet  *tweet = (Tweet *) (structure); \
-	int		len = strlen((char *) (obj)); \
-	if (len > 0) \
-	{ \
-		tweet->key = (char *) palloc(sizeof(char) * (len + 1)); \
-		strcpy(tweet->key, (obj)); \
-	} \
-} while(0)
-
-static int
-append(void *structure, char *key, uint32_t key_length, void *obj)
-{
-	if (key != NULL)
-	{
-		/* discard any unnecessary data */
-		if (structure == dummy_p)
-			return 0;
-		if (strcmp(key, "results") == 0)
-		{
-			/* root.results = array; */
-			((ResultRoot *) structure)->results = (ResultArray *) obj;
-		}
-		else if (strcmp(key, "id") == 0 && obj)
-			TWEETCOPY(structure, id, obj);
-		else if (strcmp(key, "text") == 0 && obj)
-			TWEETCOPY(structure, text, obj);
-		else if(strcmp(key, "from_user") == 0 && obj)
-			TWEETCOPY(structure, from_user, obj);
-		else if(strcmp(key, "from_user_id") == 0 && obj)
-			TWEETCOPY(structure, from_user_id, obj);
-		else if(strcmp(key, "to_user") == 0 && obj)
-			TWEETCOPY(structure, to_user, obj);
-		else if(strcmp(key, "to_user_id") == 0 && obj)
-			TWEETCOPY(structure, to_user_id, obj);
-		else if(strcmp(key, "iso_language_code") == 0)
-			TWEETCOPY(structure, iso_language_code, obj);
-		else if(strcmp(key, "source") == 0 && obj)
-			TWEETCOPY(structure, source, obj);
-		else if(strcmp(key, "profile_image_url") == 0 && obj)
-			TWEETCOPY(structure, profile_image_url, obj);
-		else if(strcmp(key, "created_at") == 0 && obj)
-			TWEETCOPY(structure, created_at, obj);
-	}
-	else
-	{
-		/*
-		 * array.push(tweet);
-		 * an array that is not dummy_p must be root.results
-		 */
-		ResultArray *array = (ResultArray *) structure;
-
-		if (array != dummy_p)
-			array->elements[array->index++] = (Tweet *) obj;
-	}
-	return 0;
+	return size*nmemb;
 }
 
 /*
@@ -969,7 +1037,7 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	if (!opts->method_delete) opts->method_delete	= "DELETE";
 	if (!opts->method_update) opts->method_update	= "POST";
 
-	if (!opts->response_type) opts->response_type	= "";
+	if (!opts->response_type) opts->response_type	= "json";
 
 	/* Check we have mandatory options */
 	if (!opts->uri)
@@ -988,15 +1056,13 @@ get_www_fdw_options_oid(void)
 		bool	isnull[1]	= {false};
 		int		res;
 
-		spi_init();
-
 		res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwoptions'", true, 0);
 		if(0 > res)
 		{
 			ereport(ERROR,
 				(
 					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("can't identify WWW_fdw_options OID: %i (%s)", res, describe_spi_code(res))
+					errmsg("Can't identify WWW_fdw_options OID: %i (%s)", res, describe_spi_code(res))
 				)
 			);
 		}
@@ -1006,16 +1072,13 @@ get_www_fdw_options_oid(void)
 			heap_deform_tuple(*(SPI_tuptable->vals), SPI_tuptable->tupdesc, data, isnull);
 			elog(DEBUG1, "Oid: %d",(int)data[0]);
 			www_fdw_options_oid	= (Oid)(data[0]);
-
-			www_fdw_options_tuple_desc	= TypeGetTupleDesc(www_fdw_options_oid, NIL);
-			www_fdw_options_aim			= TupleDescGetAttInMetadata(www_fdw_options_tuple_desc);
 		}
 		else
 		{
 			ereport(ERROR,
 				(
 					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("can't identify WWW_fdw_options OID: not exactly 1 result was returned (%d)", SPI_processed)
+					errmsg("Can't identify WWW_fdw_options OID: not exactly 1 result was returned (%d)", SPI_processed)
 				)
 			);
 		}
@@ -1024,24 +1087,24 @@ get_www_fdw_options_oid(void)
 	return	www_fdw_options_oid;
 }
 
+/* DEBUG
+WARNING:  transaction left non-empty SPI stack
+HINT:  Check for missing "SPI_finish" calls.
+*/
 /* wrapper for init code, not to duplicate it */
 static
 void
 spi_init(void)
 {
-	if(!spi_inited)
+	/* looks like we can't rely on initialization it once */
+	int	res	= SPI_connect();
+	if(SPI_OK_CONNECT != res)
 	{
-		int	res	= SPI_connect();
-		if(SPI_OK_CONNECT != res)
-		{
-			ereport(ERROR,
-				(
-					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("Can't spi connect: %i (%s)", res, describe_spi_code(res))
-				)
-			);
-		}
-
-		spi_inited	= true;
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("Can't spi connect: %i (%s)", res, describe_spi_code(res))
+			)
+		);
 	}
 }
