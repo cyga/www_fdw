@@ -4,7 +4,8 @@
 #include	<stdlib.h>
 #include	"libjson-0.8/json.h"
 
-#ifndef bool
+/* "#ifndef bool" doesn't work here */
+#ifndef true
 typedef char bool;
 #endif
 
