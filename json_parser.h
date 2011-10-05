@@ -4,9 +4,17 @@
 #include	<stdlib.h>
 #include	"libjson-0.8/json.h"
 
+#ifndef bool
 typedef char bool;
+#endif
+
+#ifndef true
 #define true	((bool) 1)
+#endif
+
+#ifndef false
 #define false	((bool) 0)
+#endif
 
 typedef	struct	JSONNode
 {
@@ -24,7 +32,24 @@ typedef	struct	JSONNode
 	char*		key;	/* active only if it belongs to object */
 } JSONNode;
 
-JSONNode*	json_new_object()
+JSONNode*	json_new_object(void);
+JSONNode*	json_new_array(void);
+JSONNode*	json_new_value(int type, const char* data, uint32_t length);
+JSONNode*	json_new_const(int type);
+void*		json_tree_create_structure(int nesting, int is_object);
+void*		json_tree_create_data(int type, const char *data, uint32_t length);
+void		json_copy_node(JSONNode *from, JSONNode* to);
+void		json_append_object(JSONNode *object, char *key, uint32_t key_length, void *obj);
+void		json_append_array(JSONNode *array, void *obj);
+int			json_tree_append(void *structure, char *key, uint32_t key_length, void *obj);
+void		json_free_tree(JSONNode* t);
+void		json_print_indent(const int indent);
+void		json_print_tree(JSONNode* t, int indent, bool comma);
+void		json_parser_init2(json_parser* parser, json_parser_dom* dom);
+JSONNode*	json_result_tree(json_parser* parser);
+
+JSONNode*
+json_new_object()
 {
 	JSONNode*	obj	= (JSONNode*)malloc(sizeof(JSONNode));
 	obj->type	= JSON_OBJECT_BEGIN;
@@ -32,7 +57,8 @@ JSONNode*	json_new_object()
 	obj->key	= NULL;
 	return	obj;
 }
-JSONNode*	json_new_array()
+JSONNode*
+json_new_array()
 {
 	JSONNode*	obj	= (JSONNode*)malloc(sizeof(JSONNode));
 	obj->type	= JSON_ARRAY_BEGIN;
@@ -40,7 +66,8 @@ JSONNode*	json_new_array()
 	obj->key	= NULL;
 	return	obj;
 }
-JSONNode*	json_new_value(int type, const char* data, uint32_t length)
+JSONNode*
+json_new_value(int type, const char* data, uint32_t length)
 {
 	int	i;
 	JSONNode*	obj	= (JSONNode*)malloc(sizeof(JSONNode));
@@ -64,7 +91,8 @@ JSONNode*	json_new_value(int type, const char* data, uint32_t length)
 	}
 	return	obj;
 }
-JSONNode*	json_new_const(int type)
+JSONNode*
+json_new_const(int type)
 {
 	JSONNode*	obj	= (JSONNode*)malloc(sizeof(JSONNode));
 	obj->type	= type;
@@ -84,7 +112,8 @@ JSONNode*	json_new_const(int type)
 	return	obj;
 }
 
-void *json_tree_create_structure(int nesting, int is_object)
+void*
+json_tree_create_structure(int nesting, int is_object)
 {
 	if (is_object)
 			return json_new_object();
@@ -92,7 +121,8 @@ void *json_tree_create_structure(int nesting, int is_object)
 			return json_new_array();
 }
 
-void *json_tree_create_data(int type, const char *data, uint32_t length)
+void*
+json_tree_create_data(int type, const char *data, uint32_t length)
 {
 	switch (type) {
 		case JSON_STRING:
@@ -104,6 +134,7 @@ void *json_tree_create_data(int type, const char *data, uint32_t length)
 		case JSON_FALSE:
 				return json_new_const(type);
 	}
+	return	NULL;
 }
 
 void
@@ -119,8 +150,6 @@ void
 json_append_object(JSONNode *object, char *key, uint32_t key_length, void *obj)
 {
 	int	i,j;
-	JSONNode*	tmp;
-
 	JSONNode*	obj_ptr	= malloc( (object->length+1) * sizeof(JSONNode) );
 
 	/* copy current elements */
@@ -145,7 +174,6 @@ void
 json_append_array(JSONNode *array, void *obj)
 {
 	int	i;
-	JSONNode*	tmp;
 
 	JSONNode*	arr_ptr	= malloc( (array->length+1) * sizeof(JSONNode) );
 	/* copy current elements */
@@ -161,7 +189,8 @@ json_append_array(JSONNode *array, void *obj)
 	array->length++;
 }
 
-int json_tree_append(void *structure, char *key, uint32_t key_length, void *obj)
+int
+json_tree_append(void *structure, char *key, uint32_t key_length, void *obj)
 {
         if (key != NULL) {
                 JSONNode *object = structure;
@@ -170,6 +199,8 @@ int json_tree_append(void *structure, char *key, uint32_t key_length, void *obj)
                 JSONNode *array = structure;
                 json_append_array(array, obj);
         }
+
+		return	1;
 }
 
 void
@@ -193,13 +224,18 @@ json_free_tree(JSONNode* t)
 		case JSON_STRING:
 			if(t->val.val_string)	free(t->val.val_string);
 			break;
-		/* nothing to do:
+		/* nothing to do */
 		case JSON_INT:
 		case JSON_FLOAT:
 		case JSON_NULL:
 		case JSON_TRUE:
 		case JSON_FALSE:
-		*/
+		/* not used, here for removing warning */
+		case JSON_NONE:
+		case JSON_KEY:
+		case JSON_ARRAY_END:
+		case JSON_OBJECT_END:
+			break;
 	}
 }
 

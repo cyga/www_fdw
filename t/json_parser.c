@@ -8,6 +8,7 @@ int	main()
 	int	ret;
 	size_t	read;
 	char	buffer[1025]	= {0};
+	JSONNode*	root	= NULL;
 
 	json_parser_init2(&json_parserr, &json_dom);
 
@@ -21,7 +22,7 @@ int	main()
 		if(read < chunk)	break;
 	}
 
-	JSONNode*	root	= json_result_tree(&json_parserr);
+	root	= json_result_tree(&json_parserr);
 	json_print_tree(root, 0, false);
 	json_free_tree(root);
 

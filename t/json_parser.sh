@@ -1,7 +1,9 @@
 #!/bin/sh
 TMP_DIR=/tmp
 t=json_parser
-gcc -g -o $t $t.c ../libjson-0.8/json.o
+GCC_OPTIONS="-O2 -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fpic"
+GCC_OPTIONS_DEBUG="-g -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fpic"
+gcc $GCC_OPTIONS -o $t $t.c ../libjson-0.8/json.o
 
 for inf in $t.in.*
 do
