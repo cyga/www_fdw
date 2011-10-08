@@ -7,7 +7,8 @@ EXTENSION = www_fdw
 DATA = www_fdw--1.0.0.sql
 
 REGRESS = www_fdw
-SHLIB_LINK = -lcurl
+PG_CPPFLAGS += -I/usr/include/libxml2
+SHLIB_LINK += -lcurl -lxml2
 
 all:all-libjson
 
