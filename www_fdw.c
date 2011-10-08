@@ -24,6 +24,10 @@
 #include "libjson-0.8/json.h"
 #include "json_parser.h"
 
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+
+
 PG_MODULE_MAGIC;
 
 /* wrapper for init code, not to duplicate it */
@@ -94,6 +98,7 @@ typedef struct Reply
 	void		   *result;
 	AttInMetadata  *attinmeta;
 	int				row_index;
+	void			*ptr_index;
 	WWW_fdw_options	*options;
 } Reply;
 
@@ -122,7 +127,8 @@ static void www_rescan(ForeignScanState *node);
 static void www_end(ForeignScanState *node);
 
 static size_t json_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp);
-static size_t json_write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp);
+static size_t xml_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp);
+static size_t write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp);
 
 static bool
 parse_parameter(char* name, char** var, DefElem* param)
@@ -537,18 +543,220 @@ serialize_request_parameters(ForeignScanState* node, StringInfoData *url)
 }
 
 /*
- * json_check_result_array
- *	currently checks all elements to be objects
+ * xml_check_result_array
+ *	Check current node to be of following structure:
+ *	node
+ *		subnode
+ *			attr1 > cdata
+ *			...
+ *			attrN > cdata
+ *		...
+ *		subnode
+ *			attr1 > cdata
+ *			...
+ *			attrN > cdata
+ *	Also node names are checked to match result columns.
+ *	At least one name must match. Matching columns must have only one text node child.
+ *	All subnodes must have same name.
 */
 static
 bool
-json_check_result_array(JSONNode* root)
+xml_check_result_array(xmlNodePtr node, TupleDesc tuple_desc, xmlChar **attnames)
 {
-	int	i;
+	xmlNodePtr	it		= NULL,
+				itc		= NULL;
+	const xmlChar *name	= NULL;
+	int			i,n		= 0;
+	bool		match	= false;
+
+	if(NULL == node)
+		return	false;
+
+	/* check all node children have same name */
+	for( it = node->children; NULL != it; it = it->next )
+	{
+		switch(it->type)
+		{
+			case XML_ELEMENT_NODE:
+				if(NULL == name)
+					name	= it->name;
+				else
+					/* check name of node to be the same */
+					if(1 != xmlStrEqual(name, it->name))
+						return	false;
+
+				/* check children */
+				n	= 0;
+				for( itc = it->children; NULL != itc; itc = itc->next )
+				{
+					/* check sub elements names to match result columns */
+					for (i = 0; i < tuple_desc->natts; i++)
+					{
+						if(1 == xmlStrEqual(attnames[i], itc->name))
+						{
+							/* don't check found value to be of ordinary type here - we can serialize it in the answer */
+
+							/* TODO: check if we need such check:
+							 * we need to have only single XML_TEXT_NODE among children
+							if(itc->children)
+							{
+
+								if(XML_TEXT_NODE != itc->children->type)
+									return	false;
+
+								if(itc->children->next)
+									return	false;
+							}
+							*/
+
+							n++;
+							break;
+						}
+					}
+				}
+
+				/* none of the children match result columns */
+				if(0 == n)
+					return	false;
+				else
+					match	= true;
+				break;
+			case XML_COMMENT_NODE:
+				continue;
+			case XML_ATTRIBUTE_NODE:
+			case XML_TEXT_NODE:
+			case XML_CDATA_SECTION_NODE:
+			case XML_ENTITY_REF_NODE:
+			case XML_ENTITY_NODE:
+			case XML_PI_NODE:
+			case XML_DOCUMENT_NODE:
+			case XML_DOCUMENT_TYPE_NODE:
+			case XML_DOCUMENT_FRAG_NODE:
+			case XML_NOTATION_NODE:
+			case XML_HTML_DOCUMENT_NODE:
+			case XML_DTD_NODE:
+			case XML_ELEMENT_DECL:
+			case XML_ATTRIBUTE_DECL:
+			case XML_ENTITY_DECL:
+			case XML_NAMESPACE_DECL:
+			case XML_XINCLUDE_START:
+			case XML_XINCLUDE_END:
+			case XML_DOCB_DOCUMENT_NODE:
+				return	false;
+		}
+	}
+
+	return	match;
+}
+
+/*
+ * xml_get_result_array_in_doc
+ *	search for a result in parsed xml
+*/
+static
+xmlNodePtr
+xml_get_result_array_in_doc(xmlDocPtr doc, TupleDesc tuple_desc)
+{
+	xmlNodePtr	suspect	= NULL,
+				it		= NULL;
+	List		*curr	= NULL,
+				*next	= NULL;
+	ListCell*	cell;
+	xmlChar**	attnames;
+	int			i;
+
+	if(NULL == doc)
+		return	NULL;
+
+	/* fill all document nodes as current list for check */
+	for( it = doc->children; NULL != it; it = it->next )
+	{
+		if(XML_ELEMENT_NODE != it->type)
+			continue;
+		curr	= lappend( curr, (void*)(it) );
+	}
+
+	/* prepare attnames in xmlChar*, to save time for strings comparisons in xml_check_result_array */
+	attnames	= (xmlChar**)palloc(tuple_desc->natts * sizeof(xmlChar*));
+	for( i=0; i<tuple_desc->natts; i++ )
+		attnames[i]	= xmlCharStrndup(tuple_desc->attrs[i]->attname.data, strlen(tuple_desc->attrs[i]->attname.data));
+
+	while(curr) {
+		foreach(cell, curr)
+		{
+			suspect	= (xmlNodePtr)(cell->data.ptr_value);
+			switch (suspect->type)
+			{
+				case XML_ELEMENT_NODE:
+					/* check node to be valid answer */
+					if(xml_check_result_array(suspect, tuple_desc, attnames))
+					{
+						/* free structures */
+						list_free(curr);
+						list_free(next);
+						for( i=0; i<tuple_desc->natts; i++ )
+							free(attnames[i]);
+						return	suspect;
+					}
+					for( it = suspect->children; NULL != it; it = it->next )
+					{
+						if(XML_ELEMENT_NODE != it->type)
+							continue;
+						next	= lappend( next, (void*)(it) );
+					}
+					break;
+				default:
+					break;
+			}
+		}
+
+		list_free(curr);
+		curr	= next;
+		next	= NULL;
+	}
+
+	/* free structures */
+	for( i=0; i<tuple_desc->natts; i++ )
+		free(attnames[i]);
+
+	return	NULL;
+}
+
+/*
+ * json_check_result_array
+ *	Currently checks all elements to be objects.
+ *	And checks if at least one key in the object matches result columns.
+*/
+static
+bool
+json_check_result_array(JSONNode* root, TupleDesc tuple_desc)
+{
+	int	i,j,k,n;
 
 	for( i=0; i<root->length; i++ )
+	{
 		if(JSON_OBJECT_BEGIN != root->val.val_array[i].type)
 			return	false;
+
+		/* check if at least one key matchs result columns */
+		n	= 0;
+		for( j=0; j<root->val.val_array[i].length && 0==n; j++ )
+		{
+			for( k=0; k<tuple_desc->natts && 0==n; k++ )
+			{
+				if(0 == namestrcmp(&tuple_desc->attrs[k]->attname, root->val.val_array[i].val.val_object[j].key))
+				{
+					/* don't check found value to be of ordinary type here - we can serialize it in the answer */
+
+					n++;
+					break;
+				}
+			}
+		}
+
+		if(0 == n)
+			return	false;
+	}
 
 	return	true;
 }
@@ -560,7 +768,7 @@ json_check_result_array(JSONNode* root)
 */
 static
 JSONNode*
-json_get_result_array_in_tree(JSONNode* root)
+json_get_result_array_in_tree(JSONNode* root, TupleDesc tuple_desc)
 {
 	JSONNode*	suspect	= NULL;
 	List		*curr	= list_make1(root),
@@ -580,8 +788,9 @@ json_get_result_array_in_tree(JSONNode* root)
 					break;
 				case JSON_ARRAY_BEGIN:
 					/* check array to be valid answer */
-					if(json_check_result_array(suspect))
+					if(json_check_result_array(suspect, tuple_desc))
 					{
+						/* free structure */
 						list_free(curr);
 						list_free(next);
 						return	suspect;
@@ -627,7 +836,8 @@ www_begin(ForeignScanState *node, int eflags)
 	StringInfoData	url;
 	json_parser		json_parserr;
 	json_parser_dom json_dom;
-	StringInfoData	json_buffer;
+	xmlParserCtxtPtr	xml_parserr	= NULL;
+	StringInfoData	buffer;
 	Relation		rel;
 	AttInMetadata	*attinmeta;
 	Reply			*reply;
@@ -670,9 +880,9 @@ www_begin(ForeignScanState *node, int eflags)
 	{
 		if(opts->response_deserialize_callback)
 		{
-			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, json_write_data_to_buffer);
-			initStringInfo(&json_buffer);
-			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &json_buffer);
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
+			initStringInfo(&buffer);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 		}
 		else
 		{
@@ -683,7 +893,17 @@ www_begin(ForeignScanState *node, int eflags)
 	}
 	else if( 0 == strcmp(opts->response_type, "xml") )
 	{
-		/* TODO */
+		if(opts->response_deserialize_callback)
+		{
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
+			initStringInfo(&buffer);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+		}
+		else
+		{
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, xml_write_data_to_parser);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &xml_parserr);
+		}
 	}
 	else if( 0 == strcmp(opts->response_type, "other") )
 	{
@@ -734,7 +954,10 @@ www_begin(ForeignScanState *node, int eflags)
 
 			elog(DEBUG1, "JSON response was parsed");
 
-			result	= json_get_result_array_in_tree(root);
+			rel = node->ss.ss_currentRelation;
+			attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
+
+			result	= json_get_result_array_in_tree(root, rel->rd_att);
 			if(!result)
 				ereport(ERROR,
 					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
@@ -742,9 +965,6 @@ www_begin(ForeignScanState *node, int eflags)
 					));
 
 			elog(DEBUG1, "Result array was found in json response");
-
-			rel = node->ss.ss_currentRelation;
-			attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
 
 			/* save result */
 			reply = (Reply*)palloc(sizeof(Reply));
@@ -765,7 +985,65 @@ www_begin(ForeignScanState *node, int eflags)
 	}
 	else if( 0 == strcmp(opts->response_type, "xml") )
 	{
-		/* TODO */
+		if(opts->response_deserialize_callback)
+		{
+			/* TODO
+			 *	call callback with accumulated xml response
+			 *	save returned set of records,
+			 *	for further iterating them in iterate routine
+			*/
+		}
+		else
+		{
+			/* get result in parsed response tree
+			 * and save it for further processing in results iterations
+			*/
+
+			xmlDocPtr	doc		= NULL;
+			xmlNodePtr	result	= NULL;
+			int			res;
+
+			/* there is no more input, indicate the parsing is finished */
+		    xmlParseChunk(xml_parserr, curl_error_buffer, 0, 1);
+
+			doc	= xml_parserr->myDoc;
+			res	= xml_parserr->wellFormed;
+
+			xmlFreeParserCtxt(xml_parserr);
+
+			if(!res)
+				ereport(ERROR,
+					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+					errmsg("Response xml isn't well formed")
+					));
+
+			elog(DEBUG1, "Xml response was parsed");
+
+			rel = node->ss.ss_currentRelation;
+			attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
+
+			result	= xml_get_result_array_in_doc(doc, rel->rd_att);
+			if(!result)
+				ereport(ERROR,
+					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+					errmsg("Can't find result in parsed server's xml response")
+					));
+
+			elog(DEBUG1, "Result array was found in xml response");
+
+			/* save result */
+			reply = (Reply*)palloc(sizeof(Reply));
+			reply->root = doc;
+			reply->result = result;
+			reply->attinmeta = attinmeta;	/* DEBUG: do we need to save it here? and in json case as well? */
+			reply->row_index = 0;
+			reply->ptr_index = result->children;
+			reply->options = opts;
+			node->fdw_state = (void *) reply;
+
+			/* TODO: where to free up xml doc?*/
+			/*xmlFreeDoc(doc);*/
+		}
 	}
 	else if( 0 == strcmp(opts->response_type, "other") )
 	{
@@ -825,39 +1103,43 @@ www_iterate(ForeignScanState *node)
 	int				i,j, natts;
 	char			**values;
 	MemoryContext	oldcontext;
-	JSONNode		obj;
+	JSONNode		*json_root		= NULL,
+					*json_result	= NULL,
+					json_obj;
+	xmlDocPtr		xml_doc		= NULL;
+	xmlNodePtr		xml_result	= NULL,
+					it			= NULL,
+					xml_obj;
 
 	if( 0 == strcmp(reply->options->response_type, "json") )
 	{
-		JSONNode	*root	= (JSONNode*)reply->root,
-					*result	= (JSONNode*)reply->result;
+		/* TODO case of callback */
+
+		json_root	= (JSONNode*)reply->root;
+		json_result	= (JSONNode*)reply->result;
 
 		/* no results or results finished */
-		if(!root || !result || !(reply->row_index < result->length))
+		if(!json_root || !json_result || !(reply->row_index < json_result->length))
 		{
 			ExecClearTuple(slot);
 			return slot;
 		}
 
-		obj = result->val.val_array[reply->row_index++];
+		json_obj = json_result->val.val_array[reply->row_index++];
 		natts = rel->rd_att->natts;
 		values = (char **) palloc(sizeof(char *) * natts);
 		for (i = 0; i < natts; i++)
 		{
 			Name	attname = &rel->rd_att->attrs[i]->attname;
 
-			for( j=0; j<obj.length; j++ )
-				if(0 == namestrcmp(attname, obj.val.val_object[j].key))
+			for( j=0; j<json_obj.length; j++ )
+				if(0 == namestrcmp(attname, json_obj.val.val_object[j].key))
 					break;
 
-			if(j < obj.length)
-			{
-				values[i]	= json2string(&(obj.val.val_object[j]));
-			}
+			if(j < json_obj.length)
+				values[i]	= json2string(&(json_obj.val.val_object[j]));
 			else
-			{
 				values[i]	= NULL;
-			}
 		}
 		oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
 		tuple = BuildTupleFromCStrings(reply->attinmeta, values);
@@ -868,7 +1150,42 @@ www_iterate(ForeignScanState *node)
 	}
 	else if( 0 == strcmp(reply->options->response_type, "xml") )
 	{
-		/* TODO */
+		/* TODO case of callback */
+
+		xml_doc		= (xmlDocPtr)reply->root;
+		xml_result	= (xmlNodePtr)reply->result;
+		xml_obj = reply->ptr_index;
+
+		/* no results or results finished */
+		if(!xml_doc || !xml_result || !xml_obj || !reply->ptr_index)
+		{
+			ExecClearTuple(slot);
+			return slot;
+		}
+
+		reply->ptr_index	= xml_obj->next;
+
+		natts = rel->rd_att->natts;
+		values = (char **) palloc(sizeof(char *) * natts);
+		for (i = 0; i < natts; i++)
+		{
+			xmlChar	*attname	= xmlCharStrndup(rel->rd_att->attrs[i]->attname.data, strlen(rel->rd_att->attrs[i]->attname.data));
+
+			for( it = xml_obj->children; NULL != it; it = it->next )
+				if(1 == xmlStrEqual(attname, it->name))
+					break;
+
+			if(it)
+				values[i]	= (char*)it->children->content;
+			else
+				values[i]	= NULL;
+		}
+		oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
+		tuple = BuildTupleFromCStrings(reply->attinmeta, values);
+		MemoryContextSwitchTo(oldcontext);
+		ExecStoreTuple(tuple, slot, InvalidBuffer, true);
+
+		return slot;
 	}
 	else if( 0 == strcmp(reply->options->response_type, "other") )
 	{
@@ -900,6 +1217,15 @@ www_rescan(ForeignScanState *node)
 {
 	Reply	   *reply = (Reply *) node->fdw_state;
 	reply->row_index	= 0;
+
+	if( 0 == strcmp(reply->options->response_type, "xml") )
+	{
+		xmlNodePtr	result	= (xmlNodePtr)reply->result;
+		if(NULL == result)
+			reply->ptr_index	= NULL;
+		else
+			reply->ptr_index	= result->children;
+	}
 }
 
 static void
@@ -923,18 +1249,66 @@ json_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp)
 	if (ret)
 		ereport(ERROR,
 			(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
-			errmsg("Can't parser server's json response, parser error code: %i", ret)
+			errmsg("Can't parse server's json response, parser error code: %i", ret)
 			));
 
 	return segsize;
 }
 
 /*
- * json_write_data_to_buffer
+ * xml_write_data_to_parser
+ *	parse xml chunk by chunk
+*/
+static size_t
+xml_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp)
+{
+	int			segsize = size * nmemb;
+	xmlParserCtxtPtr *ctxt = (xmlParserCtxtPtr*) userp;
+	int			ret;
+
+	if(NULL == *ctxt) {
+		/* parser wasn't initialized,
+		 * because we are waiting first chunk for encoding analyze
+		*/
+
+		/*
+		* Create a progressive parsing context, the 2 first arguments
+		* are not used since we want to build a tree and not use a SAX
+		* parsing interface. We also pass the first bytes of the document
+		* to allow encoding detection when creating the parser but this
+		* is optional.
+		*/
+		*ctxt = xmlCreatePushParserCtxt(NULL, NULL, buffer, segsize, NULL);
+		if (*ctxt == NULL) {
+			xmlErrorPtr	err	= xmlCtxtGetLastError(*ctxt);
+			ereport(ERROR,
+				(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+				errmsg("Can't parse server's xml response: %s", err ? err->message : "")
+				));
+		}
+
+		return segsize;
+	}
+
+	ret = xmlParseChunk(*ctxt, buffer, segsize, 0);
+	if (ret)
+	{
+		xmlErrorPtr	err	= xmlCtxtGetLastError(*ctxt);
+		ereport(ERROR,
+			(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+			errmsg("Can't parse server's xml response, parser error code: %i, message: %s", ret, err ? err->message : "")
+			));
+	}
+
+	return segsize;
+}
+
+/*
+ * write_data_to_buffer
  *	accumulate json response in buffer for further processing
 */
 static size_t
-json_write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp)
+write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp)
 {
 	appendBinaryStringInfo((StringInfoData*)userp, buffer, size*nmemb);
 
