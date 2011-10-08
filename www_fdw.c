@@ -30,8 +30,9 @@
 
 PG_MODULE_MAGIC;
 
-/* wrapper for init code, not to duplicate it */
+/* wrappers for spi calls, not to duplicate it */
 static void spi_init(void);
+static void spi_finish(void);
 
 struct WWW_fdw_option
 {
@@ -1231,7 +1232,7 @@ www_rescan(ForeignScanState *node)
 static void
 www_end(ForeignScanState *node)
 {
-	/* intentionally left blank */
+	spi_finish();
 }
 
 /*
@@ -1461,11 +1462,9 @@ get_www_fdw_options_oid(void)
 	return	www_fdw_options_oid;
 }
 
-/* DEBUG
-WARNING:  transaction left non-empty SPI stack
-HINT:  Check for missing "SPI_finish" calls.
+/* spi_init
+ * wrapper for init code, not to duplicate it
 */
-/* wrapper for init code, not to duplicate it */
 static
 void
 spi_init(void)
@@ -1478,6 +1477,24 @@ spi_init(void)
 			(
 				errcode(ERRCODE_SYNTAX_ERROR),
 				errmsg("Can't spi connect: %i (%s)", res, describe_spi_code(res))
+			)
+		);
+	}
+}
+/* spi_finish
+ * wrapper for finish code, not to duplicate it
+*/
+static
+void
+spi_finish(void)
+{
+	int	res	= SPI_finish();
+	if(SPI_OK_FINISH != res)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("Can't spi finish: %i (%s)", res, describe_spi_code(res))
 			)
 		);
 	}
