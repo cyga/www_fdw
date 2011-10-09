@@ -1,11 +1,13 @@
 #!/bin/bash
-t=`echo $0 | perl -pe's#(.*/).*#$1/test.sh#;'`
-source "$t"
+test_dir=`echo $0 | perl -pe's#(.*/).*#$1#;'`
+source "$test_dir/test.sh"
 
 bin=`pg_config --bindir`
 psql="$bin/psql"
 
 waits=3
+
+$psql -f "$test_dir/default-xml.sql"
 
 perl -Mojo -e'a("/" => {text => "<doc><nrows>3</nrows><rows><row><title>3</title></row></rows></doc>"})->start' daemon --listen http://*:7777 &
 spid=$!

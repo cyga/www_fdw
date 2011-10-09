@@ -1,11 +1,13 @@
 #!/bin/bash
-t=`echo $0 | perl -pe's#(.*/).*#$1/test.sh#;'`
-source "$t"
+test_dir=`echo $0 | perl -pe's#(.*/).*#$1#;'`
+source "$test_dir/test.sh"
 
 bin=`pg_config --bindir`
 psql="$bin/psql"
 
 waits=3
+
+$psql -f "$test_dir/default.sql"
 
 perl -Mojo -e'a("/" => {json => {nrows=>2,rows=>[{title=>"t0",link=>"l0",snippet=>"s0"},{title=>"t1",link=>"l1",snippet=>"s1"}]}})->start' daemon --listen http://*:7777 &
 spid=$!
