@@ -30,10 +30,6 @@
 
 PG_MODULE_MAGIC;
 
-/* wrappers for spi calls, not to duplicate it */
-static void spi_init(void);
-static void spi_finish(void);
-
 struct WWW_fdw_option
 {
 	const char	*optname;
@@ -842,6 +838,7 @@ www_begin(ForeignScanState *node, int eflags)
 	Relation		rel;
 	AttInMetadata	*attinmeta;
 	Reply			*reply;
+	int				res;
 
 	/*
 	 * Do nothing in EXPLAIN
@@ -849,7 +846,16 @@ www_begin(ForeignScanState *node, int eflags)
 	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
 		return;
 
-	spi_init();
+	res	= SPI_connect();
+	if(SPI_OK_CONNECT != res)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("Can't spi connect: %i (%s)", res, describe_spi_code(res))
+			)
+		);
+	}
 
 	opts	= (WWW_fdw_options*)palloc(sizeof(WWW_fdw_options));
 	get_options( RelationGetRelid(node->ss.ss_currentRelation), opts );
@@ -1232,7 +1238,16 @@ www_rescan(ForeignScanState *node)
 static void
 www_end(ForeignScanState *node)
 {
-	spi_finish();
+	int	res	= SPI_finish();
+	if(SPI_OK_FINISH != res)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("Can't spi finish: %i (%s)", res, describe_spi_code(res))
+			)
+		);
+	}
 }
 
 /*
@@ -1460,42 +1475,4 @@ get_www_fdw_options_oid(void)
 	}
 
 	return	www_fdw_options_oid;
-}
-
-/* spi_init
- * wrapper for init code, not to duplicate it
-*/
-static
-void
-spi_init(void)
-{
-	/* looks like we can't rely on initialization it once */
-	int	res	= SPI_connect();
-	if(SPI_OK_CONNECT != res)
-	{
-		ereport(ERROR,
-			(
-				errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("Can't spi connect: %i (%s)", res, describe_spi_code(res))
-			)
-		);
-	}
-}
-/* spi_finish
- * wrapper for finish code, not to duplicate it
-*/
-static
-void
-spi_finish(void)
-{
-	int	res	= SPI_finish();
-	if(SPI_OK_FINISH != res)
-	{
-		ereport(ERROR,
-			(
-				errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("Can't spi finish: %i (%s)", res, describe_spi_code(res))
-			)
-		);
-	}
 }
