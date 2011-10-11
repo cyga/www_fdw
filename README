@@ -15,7 +15,10 @@ Installation
 The CREATE EXTENSION statement creates not only FDW handlers but also
 Data Wrapper, Foreign Server, User Mapping and table.
 
-TODO
+PostgreSQL server installation
+----------------------------
+
+In order to work with xml type (used in response_deserialize_callback) your installation has to support xml type. Usually it means building PostgreSQL with --with-libxml option.
 
 Usage
 -----

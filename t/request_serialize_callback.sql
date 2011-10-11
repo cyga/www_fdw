@@ -7,7 +7,7 @@ CREATE FOREIGN TABLE www_fdw_test (
 	link text,
 	snippet text
 ) SERVER www_server_test;
-CREATE OR REPLACE FUNCTION test_request_serialize_callback(options anyelement) RETURNS text AS $$
+CREATE OR REPLACE FUNCTION test_request_serialize_callback(options WWWFdwOptions) RETURNS text AS $$
 BEGIN
 	RAISE NOTICE 'parameter: %', options;
 	RETURN 'works';

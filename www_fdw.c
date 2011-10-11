@@ -19,6 +19,7 @@
 #include "executor/spi.h"
 #include "utils/fmgroids.h"
 #include "catalog/pg_type.h"
+#include "utils/xml.h"
 
 #include "curl/curl.h"
 #include "libjson-0.8/json.h"
@@ -82,12 +83,22 @@ typedef struct	WWW_fdw_options
 	char*	response_iterate_callback;
 } WWW_fdw_options;
 
+/* TODO: repeat this calls each time: we can't save it here 
+   probably in structures passed between main callback
+*/
 Oid	www_fdw_options_oid	= 0;
 /* DEBUG check if all needed */
 TupleDesc	www_fdw_options_tuple_desc;
 AttInMetadata*	www_fdw_options_aim;
+Datum	www_fdw_options_datum;
 /* used to initialize OID above and return, basically wrapper for init code */
 static Oid get_www_fdw_options_oid(void);
+
+typedef struct StringBuffer
+{
+	void	*buffer;
+	size_t	length;
+} StringBuffer;
 
 typedef struct Reply
 {
@@ -478,7 +489,8 @@ serialize_request_with_callback(WWW_fdw_options *opts, ForeignScanState *node, S
 	/* prepare options for the call */
 	www_fdw_options_tuple_desc	= TypeGetTupleDesc(www_fdw_options_oid, NIL);
 	www_fdw_options_aim			= TupleDescGetAttInMetadata(www_fdw_options_tuple_desc);
-	values[0]	= HeapTupleGetDatum( BuildTupleFromCStrings(www_fdw_options_aim, options) );
+	www_fdw_options_datum		= HeapTupleGetDatum( BuildTupleFromCStrings(www_fdw_options_aim, options) );
+	values[0]					= www_fdw_options_datum;
 
 	//res	= SPI_execute(opts->request_serialize_callback, true, 0);
 	res	= SPI_execute_with_args(cmd.data, 1, argtypes, values, NULL, true, 0);
@@ -819,6 +831,75 @@ json_get_result_array_in_tree(JSONNode* root, TupleDesc tuple_desc)
 	return	NULL;
 }
 
+static
+void
+call_xml_response_deserialize_callback(WWW_fdw_options *opts, StringBuffer *buffer)
+{
+	text	*buffer_text;
+	xmltype	*xml;
+	int		res;
+	StringInfoData	cmd;
+	Oid		argtypes[2]	= { get_www_fdw_options_oid(), XMLOID };
+	Datum	values[2];
+	char*	options[]	= {
+		opts->uri,
+		opts->uri_select,
+		opts->uri_insert,
+		opts->uri_delete,
+		opts->uri_update,
+		opts->uri_callback,
+
+		opts->method_select,
+		opts->method_insert,
+		opts->method_delete,
+		opts->method_update,
+
+		opts->request_serialize_callback,
+
+		opts->response_type,
+		opts->response_deserialize_callback,
+		opts->response_iterate_callback
+	};
+
+	/* make text variable */
+	buffer_text	= (text*)palloc(VARHDRSZ + buffer->length);
+	SET_VARSIZE(buffer_text, VARHDRSZ + buffer->length);
+	memcpy(buffer_text->vl_dat, buffer, buffer->length);
+
+	/* parses xml variable 
+	 * it parses/checks xml string and returns casted variable
+	 */
+	xml	= xmlparse(buffer_text, XMLOPTION_DOCUMENT, true);
+
+	/* do callback */
+	initStringInfo(&cmd);
+	appendStringInfo(&cmd, "SELECT %s($1,$2)", opts->response_deserialize_callback);
+
+	/* TODO: redo these inits */
+	www_fdw_options_tuple_desc	= TypeGetTupleDesc(www_fdw_options_oid, NIL);
+	www_fdw_options_aim			= TupleDescGetAttInMetadata(www_fdw_options_tuple_desc);
+	www_fdw_options_datum		= HeapTupleGetDatum( BuildTupleFromCStrings(www_fdw_options_aim, options) );
+	values[0]					= www_fdw_options_datum;
+
+	values[1]	= XmlPGetDatum(xml);
+
+	res	= SPI_execute_with_args(cmd.data, 2, argtypes, values, NULL, true, 0);
+	if(0 > res)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("Can't execute response_deserialize_callback '%s': %i (%s)", opts->response_deserialize_callback, res, describe_spi_code(res))
+			)
+		);
+	}
+	else
+	{
+		// TODO: process results
+		//SPI_tuptable->vals->
+	}
+}
+
 /*
  * www_begin
  *   Query search API and setup result
@@ -834,7 +915,8 @@ www_begin(ForeignScanState *node, int eflags)
 	json_parser		json_parserr;
 	json_parser_dom json_dom;
 	xmlParserCtxtPtr	xml_parserr	= NULL;
-	StringInfoData	buffer;
+	StringInfoData	buffer_string;
+	StringBuffer	buffer;
 	Relation		rel;
 	AttInMetadata	*attinmeta;
 	Reply			*reply;
@@ -888,7 +970,8 @@ www_begin(ForeignScanState *node, int eflags)
 		if(opts->response_deserialize_callback)
 		{
 			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
-			initStringInfo(&buffer);
+			initStringInfo(&buffer_string);
+			buffer.buffer	= (void*)&buffer_string;
 			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 		}
 		else
@@ -903,7 +986,8 @@ www_begin(ForeignScanState *node, int eflags)
 		if(opts->response_deserialize_callback)
 		{
 			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
-			initStringInfo(&buffer);
+			initStringInfo(&buffer_string);
+			buffer.buffer	= (void*)&buffer_string;
 			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 		}
 		else
@@ -998,7 +1082,9 @@ www_begin(ForeignScanState *node, int eflags)
 			 *	call callback with accumulated xml response
 			 *	save returned set of records,
 			 *	for further iterating them in iterate routine
+			 * what is result of following function?
 			*/
+			call_xml_response_deserialize_callback( opts, &buffer );
 		}
 		else
 		{
@@ -1326,9 +1412,13 @@ xml_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp)
 static size_t
 write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp)
 {
-	appendBinaryStringInfo((StringInfoData*)userp, buffer, size*nmemb);
+	StringBuffer	*b	= (StringBuffer*)userp;
+	int				s	= size*nmemb;
 
-	return size*nmemb;
+	appendBinaryStringInfo((StringInfoData*)(b->buffer), buffer, s);
+	b->length	+= s;
+
+	return s;
 }
 
 /*
