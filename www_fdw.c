@@ -91,6 +91,8 @@ typedef struct Reply
 	int				row_index;
 	void			*ptr_index;
 	WWW_fdw_options	*options;
+	Oid			  	*opts_type;
+	Datum		  	*opts_value;
 } Reply;
 
 static bool www_is_valid_option(const char *option, Oid context);
@@ -1045,6 +1047,8 @@ www_begin(ForeignScanState *node, int eflags)
 			reply->row_index = 0;
 			reply->ptr_index = NULL;
 			reply->options = opts;
+			reply->opts_type = opts_type;
+			reply->opts_value = opts_value;
 			node->fdw_state = (void *) reply;
 		}
 		else
@@ -1083,6 +1087,8 @@ www_begin(ForeignScanState *node, int eflags)
 			reply->attinmeta = attinmeta;
 			reply->row_index = 0;
 			reply->options = opts;
+			reply->opts_type = opts_type;
+			reply->opts_value = opts_value;
 			node->fdw_state = (void *) reply;
 
 			json_parser_free(&json_parserr);
@@ -1113,6 +1119,8 @@ www_begin(ForeignScanState *node, int eflags)
 			reply->row_index = 0;
 			reply->ptr_index = NULL;
 			reply->options = opts;
+			reply->opts_type = opts_type;
+			reply->opts_value = opts_value;
 			node->fdw_state = (void *) reply;
 		}
 		else
@@ -1157,10 +1165,12 @@ www_begin(ForeignScanState *node, int eflags)
 			reply = (Reply*)palloc(sizeof(Reply));
 			reply->root = doc;
 			reply->result = result;
-			reply->attinmeta = attinmeta;	/* DEBUG: do we need to save it here? and in json case as well? */
+			reply->attinmeta = attinmeta;
 			reply->row_index = 0;
 			reply->ptr_index = result->children;
 			reply->options = opts;
+			reply->opts_type = opts_type;
+			reply->opts_value = opts_value;
 			node->fdw_state = (void *) reply;
 
 			/* TODO: where to free up xml doc?*/
