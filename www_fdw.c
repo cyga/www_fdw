@@ -83,23 +83,6 @@ typedef struct	WWW_fdw_options
 	char*	response_iterate_callback;
 } WWW_fdw_options;
 
-/* TODO: repeat this calls each time: we can't save it here 
-   probably in structures passed between main callback
-*/
-Oid	www_fdw_options_oid	= 0;
-/* DEBUG check if all needed */
-TupleDesc	www_fdw_options_tuple_desc;
-AttInMetadata*	www_fdw_options_aim;
-Datum	www_fdw_options_datum;
-/* used to initialize OID above and return, basically wrapper for init code */
-static Oid get_www_fdw_options_oid(void);
-
-typedef struct StringBuffer
-{
-	void	*buffer;
-	size_t	length;
-} StringBuffer;
-
 typedef struct Reply
 {
 	void		   *root;
@@ -456,43 +439,17 @@ describe_spi_code(int code)
  *		2. out parameters for: request string and others
  */
 static void
-serialize_request_with_callback(WWW_fdw_options *opts, ForeignScanState *node, StringInfoData *url)
+serialize_request_with_callback(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value, ForeignScanState *node, StringInfoData *url)
 {
 	int	res;
 	StringInfoData	cmd;
-	Datum	values[1];
-	Oid		argtypes[1]	= { get_www_fdw_options_oid() };
-	char*	options[]	= {
-		opts->uri,
-		opts->uri_select,
-		opts->uri_insert,
-		opts->uri_delete,
-		opts->uri_update,
-		opts->uri_callback,
-
-		opts->method_select,
-		opts->method_insert,
-		opts->method_delete,
-		opts->method_update,
-
-		opts->request_serialize_callback,
-
-		opts->response_type,
-		opts->response_deserialize_callback,
-		opts->response_iterate_callback
-	};
+	Oid	argtypes[1]	= { *opts_type };
+	Datum values[1]	= { *opts_value };
 
 	initStringInfo(&cmd);
 	// TODO: add 2nd parameter - qual converted correspondingly
 	appendStringInfo(&cmd, "SELECT %s($1)", opts->request_serialize_callback);
 
-	/* prepare options for the call */
-	www_fdw_options_tuple_desc	= TypeGetTupleDesc(www_fdw_options_oid, NIL);
-	www_fdw_options_aim			= TupleDescGetAttInMetadata(www_fdw_options_tuple_desc);
-	www_fdw_options_datum		= HeapTupleGetDatum( BuildTupleFromCStrings(www_fdw_options_aim, options) );
-	values[0]					= www_fdw_options_datum;
-
-	//res	= SPI_execute(opts->request_serialize_callback, true, 0);
 	res	= SPI_execute_with_args(cmd.data, 1, argtypes, values, NULL, true, 0);
 	if(0 > res)
 	{
@@ -833,14 +790,56 @@ json_get_result_array_in_tree(JSONNode* root, TupleDesc tuple_desc)
 
 static
 void
-call_xml_response_deserialize_callback(WWW_fdw_options *opts, StringBuffer *buffer)
+call_xml_response_deserialize_callback(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value, StringInfoData *buffer)
 {
 	text	*buffer_text;
 	xmltype	*xml;
 	int		res;
 	StringInfoData	cmd;
-	Oid		argtypes[2]	= { get_www_fdw_options_oid(), XMLOID };
-	Datum	values[2];
+	Oid		argtypes[2]	= { *opts_type, XMLOID };
+	Datum	 values[2];
+
+	values[0]	= *opts_value;
+
+	/* make text variable */
+	buffer_text	= (text*)palloc(VARHDRSZ + buffer->len);
+	SET_VARSIZE(buffer_text, VARHDRSZ + buffer->len);
+	memcpy(buffer_text->vl_dat, buffer->data, buffer->len);
+
+	/* parses xml variable 
+	 * it parses/checks xml string and returns casted variable
+	 */
+	xml	= xmlparse(buffer_text, XMLOPTION_DOCUMENT, true);
+	values[1]	= XmlPGetDatum(xml);
+
+	/* do callback */
+	initStringInfo(&cmd);
+	appendStringInfo(&cmd, "SELECT %s($1,$2)", opts->response_deserialize_callback);
+
+	res	= SPI_execute_with_args(cmd.data, 2, argtypes, values, NULL, true, 0);
+	if(0 > res)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("Can't execute response_deserialize_callback '%s': %i (%s)", opts->response_deserialize_callback, res, describe_spi_code(res))
+			)
+		);
+	}
+	else
+	{
+		// TODO: process results
+		//SPI_tuptable->vals->
+	}
+}
+
+static
+void
+get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
+{
+	Datum	data[1];
+	bool	isnull[1]	= {false};
+	int		res;
 	char*	options[]	= {
 		opts->uri,
 		opts->uri_select,
@@ -860,43 +859,37 @@ call_xml_response_deserialize_callback(WWW_fdw_options *opts, StringBuffer *buff
 		opts->response_deserialize_callback,
 		opts->response_iterate_callback
 	};
+	TupleDesc		tuple_desc;
+	AttInMetadata*	aim;
 
-	/* make text variable */
-	buffer_text	= (text*)palloc(VARHDRSZ + buffer->length);
-	SET_VARSIZE(buffer_text, VARHDRSZ + buffer->length);
-	memcpy(buffer_text->vl_dat, buffer, buffer->length);
-
-	/* parses xml variable 
-	 * it parses/checks xml string and returns casted variable
-	 */
-	xml	= xmlparse(buffer_text, XMLOPTION_DOCUMENT, true);
-
-	/* do callback */
-	initStringInfo(&cmd);
-	appendStringInfo(&cmd, "SELECT %s($1,$2)", opts->response_deserialize_callback);
-
-	/* TODO: redo these inits */
-	www_fdw_options_tuple_desc	= TypeGetTupleDesc(www_fdw_options_oid, NIL);
-	www_fdw_options_aim			= TupleDescGetAttInMetadata(www_fdw_options_tuple_desc);
-	www_fdw_options_datum		= HeapTupleGetDatum( BuildTupleFromCStrings(www_fdw_options_aim, options) );
-	values[0]					= www_fdw_options_datum;
-
-	values[1]	= XmlPGetDatum(xml);
-
-	res	= SPI_execute_with_args(cmd.data, 2, argtypes, values, NULL, true, 0);
+	res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwoptions'", true, 0);
 	if(0 > res)
 	{
 		ereport(ERROR,
-			(
-				errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("Can't execute response_deserialize_callback '%s': %i (%s)", opts->response_deserialize_callback, res, describe_spi_code(res))
-			)
-		);
+				(
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("Can't identify WWW_fdw_options OID: %i (%s)", res, describe_spi_code(res))
+					)
+			);
+	}
+
+	if(1 == SPI_processed)
+	{
+		heap_deform_tuple(*(SPI_tuptable->vals), SPI_tuptable->tupdesc, data, isnull);
+		*opts_type	= (Oid)(data[0]);
+
+		tuple_desc	= TypeGetTupleDesc(*opts_type, NIL);
+		aim			= TupleDescGetAttInMetadata(tuple_desc);
+		*opts_value	= HeapTupleGetDatum( BuildTupleFromCStrings(aim, options) );
 	}
 	else
 	{
-		// TODO: process results
-		//SPI_tuptable->vals->
+		ereport(ERROR,
+				(
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("Can't identify WWW_fdw_options OID: not exactly 1 result was returned (%d)", SPI_processed)
+					)
+			);
 	}
 }
 
@@ -915,18 +908,23 @@ www_begin(ForeignScanState *node, int eflags)
 	json_parser		json_parserr;
 	json_parser_dom json_dom;
 	xmlParserCtxtPtr	xml_parserr	= NULL;
-	StringInfoData	buffer_string;
-	StringBuffer	buffer;
+	StringInfoData	buffer;
 	Relation		rel;
 	AttInMetadata	*attinmeta;
 	Reply			*reply;
 	int				res;
+	Oid				*opts_type	= NULL;
+	Datum			*opts_value	= NULL;
+
+	elog(DEBUG1, "www_begin routine");
 
 	/*
 	 * Do nothing in EXPLAIN
 	 */
 	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
 		return;
+
+	elog(DEBUG1, "www_begin routine, not explain only call");
 
 	res	= SPI_connect();
 	if(SPI_OK_CONNECT != res)
@@ -945,12 +943,26 @@ www_begin(ForeignScanState *node, int eflags)
 	initStringInfo(&url);
 	appendStringInfo(&url, "%s%s", opts->uri, opts->uri_select);
 
+	/* initialize options type and value if any of callback specified */
+	if(
+		opts->request_serialize_callback
+		||
+		opts->response_deserialize_callback
+		||
+		opts->response_iterate_callback
+	)
+	{
+		opts_type	= (Oid*)palloc(sizeof(Oid));
+		opts_value	= (Datum*)palloc(sizeof(Datum));
+		get_www_fdw_options(opts, opts_type, opts_value);
+	}
+
 	if(opts->request_serialize_callback)
 	{
 		/* call specified callback for forming request */
 		/* TODO */
 		/* serialize_request_with_callback(opts, node, &url, &struct4otherParams); */
-		serialize_request_with_callback(opts, node, &url);
+		serialize_request_with_callback(opts, opts_type, opts_value, node, &url);
 	}
 	else
 	{
@@ -970,8 +982,7 @@ www_begin(ForeignScanState *node, int eflags)
 		if(opts->response_deserialize_callback)
 		{
 			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
-			initStringInfo(&buffer_string);
-			buffer.buffer	= (void*)&buffer_string;
+			initStringInfo(&buffer);
 			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 		}
 		else
@@ -986,8 +997,7 @@ www_begin(ForeignScanState *node, int eflags)
 		if(opts->response_deserialize_callback)
 		{
 			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
-			initStringInfo(&buffer_string);
-			buffer.buffer	= (void*)&buffer_string;
+			initStringInfo(&buffer);
 			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 		}
 		else
@@ -1027,6 +1037,15 @@ www_begin(ForeignScanState *node, int eflags)
 			 *	save returned set of records,
 			 *	for further iterating them in iterate routine
 			*/
+			/* save result */
+			reply = (Reply*)palloc(sizeof(Reply));
+			reply->root = NULL;
+			reply->result = NULL;
+			reply->attinmeta = NULL;
+			reply->row_index = 0;
+			reply->ptr_index = NULL;
+			reply->options = opts;
+			node->fdw_state = (void *) reply;
 		}
 		else
 		{
@@ -1084,7 +1103,17 @@ www_begin(ForeignScanState *node, int eflags)
 			 *	for further iterating them in iterate routine
 			 * what is result of following function?
 			*/
-			call_xml_response_deserialize_callback( opts, &buffer );
+			call_xml_response_deserialize_callback( opts, opts_type, opts_value, &buffer );
+
+			/* save result */
+			reply = (Reply*)palloc(sizeof(Reply));
+			reply->root = NULL;
+			reply->result = NULL;
+			reply->attinmeta = NULL;
+			reply->row_index = 0;
+			reply->ptr_index = NULL;
+			reply->options = opts;
+			node->fdw_state = (void *) reply;
 		}
 		else
 		{
@@ -1204,81 +1233,99 @@ www_iterate(ForeignScanState *node)
 					it			= NULL,
 					xml_obj;
 
+	elog(DEBUG1, "www_iterate routine");
+
 	if( 0 == strcmp(reply->options->response_type, "json") )
 	{
-		/* TODO case of callback */
-
-		json_root	= (JSONNode*)reply->root;
-		json_result	= (JSONNode*)reply->result;
-
-		/* no results or results finished */
-		if(!json_root || !json_result || !(reply->row_index < json_result->length))
+		if(reply->options->response_deserialize_callback)
 		{
-			ExecClearTuple(slot);
+			/* TODO case of callback */
+		}
+		else
+		{
+			/* get saved/parsed result */
+			json_root	= (JSONNode*)reply->root;
+			json_result	= (JSONNode*)reply->result;
+
+			/* no results or results finished */
+			if(!json_root || !json_result || !(reply->row_index < json_result->length))
+			{
+				ExecClearTuple(slot);
+				return slot;
+			}
+
+			/* prepare/find column places, make iteration (++ statement) */
+			json_obj = json_result->val.val_array[reply->row_index++];
+			natts = rel->rd_att->natts;
+			values = (char **) palloc(sizeof(char *) * natts);
+			for (i = 0; i < natts; i++)
+			{
+				Name	attname = &rel->rd_att->attrs[i]->attname;
+
+				for( j=0; j<json_obj.length; j++ )
+					if(0 == namestrcmp(attname, json_obj.val.val_object[j].key))
+						break;
+
+				if(j < json_obj.length)
+					values[i]	= json2string(&(json_obj.val.val_object[j]));
+				else
+					values[i]	= NULL;
+			}
+			oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
+			tuple = BuildTupleFromCStrings(reply->attinmeta, values);
+			MemoryContextSwitchTo(oldcontext);
+			ExecStoreTuple(tuple, slot, InvalidBuffer, true);
+
 			return slot;
 		}
-
-		json_obj = json_result->val.val_array[reply->row_index++];
-		natts = rel->rd_att->natts;
-		values = (char **) palloc(sizeof(char *) * natts);
-		for (i = 0; i < natts; i++)
-		{
-			Name	attname = &rel->rd_att->attrs[i]->attname;
-
-			for( j=0; j<json_obj.length; j++ )
-				if(0 == namestrcmp(attname, json_obj.val.val_object[j].key))
-					break;
-
-			if(j < json_obj.length)
-				values[i]	= json2string(&(json_obj.val.val_object[j]));
-			else
-				values[i]	= NULL;
-		}
-		oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
-		tuple = BuildTupleFromCStrings(reply->attinmeta, values);
-		MemoryContextSwitchTo(oldcontext);
-		ExecStoreTuple(tuple, slot, InvalidBuffer, true);
-
-		return slot;
 	}
 	else if( 0 == strcmp(reply->options->response_type, "xml") )
 	{
-		/* TODO case of callback */
-
-		xml_doc		= (xmlDocPtr)reply->root;
-		xml_result	= (xmlNodePtr)reply->result;
-		xml_obj = reply->ptr_index;
-
-		/* no results or results finished */
-		if(!xml_doc || !xml_result || !xml_obj || !reply->ptr_index)
+		if(reply->options->response_deserialize_callback)
 		{
-			ExecClearTuple(slot);
+			/* TODO case of callback */
+			elog(ERROR,"TODO: to implement");
+		}
+		else
+		{
+			/* get saved/parsed result */
+			xml_doc		= (xmlDocPtr)reply->root;
+			xml_result	= (xmlNodePtr)reply->result;
+			xml_obj = reply->ptr_index;
+
+			/* no results or results finished */
+			if(!xml_doc || !xml_result || !xml_obj || !reply->ptr_index)
+			{
+				ExecClearTuple(slot);
+				return slot;
+			}
+
+			/* next iteration */
+			reply->ptr_index	= xml_obj->next;
+
+			/* prepare/find column places */
+			natts = rel->rd_att->natts;
+			values = (char **) palloc(sizeof(char *) * natts);
+			for (i = 0; i < natts; i++)
+			{
+				xmlChar	*attname	= xmlCharStrndup(rel->rd_att->attrs[i]->attname.data, strlen(rel->rd_att->attrs[i]->attname.data));
+
+				for( it = xml_obj->children; NULL != it; it = it->next )
+					if(1 == xmlStrEqual(attname, it->name))
+						break;
+
+				if(it)
+					values[i]	= (char*)it->children->content;
+				else
+					values[i]	= NULL;
+			}
+			oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
+			tuple = BuildTupleFromCStrings(reply->attinmeta, values);
+			MemoryContextSwitchTo(oldcontext);
+			ExecStoreTuple(tuple, slot, InvalidBuffer, true);
+
 			return slot;
 		}
-
-		reply->ptr_index	= xml_obj->next;
-
-		natts = rel->rd_att->natts;
-		values = (char **) palloc(sizeof(char *) * natts);
-		for (i = 0; i < natts; i++)
-		{
-			xmlChar	*attname	= xmlCharStrndup(rel->rd_att->attrs[i]->attname.data, strlen(rel->rd_att->attrs[i]->attname.data));
-
-			for( it = xml_obj->children; NULL != it; it = it->next )
-				if(1 == xmlStrEqual(attname, it->name))
-					break;
-
-			if(it)
-				values[i]	= (char*)it->children->content;
-			else
-				values[i]	= NULL;
-		}
-		oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
-		tuple = BuildTupleFromCStrings(reply->attinmeta, values);
-		MemoryContextSwitchTo(oldcontext);
-		ExecStoreTuple(tuple, slot, InvalidBuffer, true);
-
-		return slot;
 	}
 	else if( 0 == strcmp(reply->options->response_type, "other") )
 	{
@@ -1412,11 +1459,10 @@ xml_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp)
 static size_t
 write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp)
 {
-	StringBuffer	*b	= (StringBuffer*)userp;
+	StringInfoData	*b	= (StringInfoData*)userp;
 	int				s	= size*nmemb;
 
-	appendBinaryStringInfo((StringInfoData*)(b->buffer), buffer, s);
-	b->length	+= s;
+	appendBinaryStringInfo(b, buffer, s);
 
 	return s;
 }
@@ -1525,44 +1571,4 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 			(errcode(ERRCODE_SYNTAX_ERROR),
 			errmsg("At least uri option must be specified")
 			));
-}
-
-static
-Oid
-get_www_fdw_options_oid(void)
-{
-	if(0 == www_fdw_options_oid) {
-		Datum	data[1];
-		bool	isnull[1]	= {false};
-		int		res;
-
-		res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwoptions'", true, 0);
-		if(0 > res)
-		{
-			ereport(ERROR,
-				(
-					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("Can't identify WWW_fdw_options OID: %i (%s)", res, describe_spi_code(res))
-				)
-			);
-		}
-
-		if(1 == SPI_processed)
-		{
-			heap_deform_tuple(*(SPI_tuptable->vals), SPI_tuptable->tupdesc, data, isnull);
-			elog(DEBUG1, "Oid: %d",(int)data[0]);
-			www_fdw_options_oid	= (Oid)(data[0]);
-		}
-		else
-		{
-			ereport(ERROR,
-				(
-					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("Can't identify WWW_fdw_options OID: not exactly 1 result was returned (%d)", SPI_processed)
-				)
-			);
-		}
-	}
-
-	return	www_fdw_options_oid;
 }

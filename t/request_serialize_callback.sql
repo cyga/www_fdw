@@ -9,8 +9,6 @@ CREATE FOREIGN TABLE www_fdw_test (
 ) SERVER www_server_test;
 CREATE OR REPLACE FUNCTION test_request_serialize_callback(options WWWFdwOptions) RETURNS text AS $$
 BEGIN
-	RAISE NOTICE 'parameter: %', options;
+	RAISE DEBUG 'parameter: %', options;
 	RETURN 'works';
 END; $$ LANGUAGE PLPGSQL;
-
--- TODO: do tests here
