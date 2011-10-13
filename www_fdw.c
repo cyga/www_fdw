@@ -823,17 +823,25 @@ json_get_result_array_in_tree(JSONNode* root, TupleDesc tuple_desc)
  */
 static
 Reply*
-call_xml_response_deserialize_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts_value, StringInfoData *buffer)
+call_xml_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type, Datum opts_value, StringInfoData *buffer)
 {
 	text	*buffer_text;
 	xmltype	*xml;
-	int		res, i;
+	int		res, i,j, natts;
 	StringInfoData	cmd;
-	Oid		argtypes[2]	= { opts_type, XMLOID };
-	Datum	 values[2];
+	Oid		opts_argtypes[2]	= { opts_type, XMLOID };
+	Datum	opts_values[2];
 	Reply	*reply;
+	Relation		rel;
+	AttInMetadata	*attinmeta;
+	char			**values	= NULL,
+		**names	= NULL;
+	int16			*columns;
 
-	values[0]	= opts_value;
+	opts_values[0]	= opts_value;
+
+	rel = node->ss.ss_currentRelation;
+	attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
 
 	/* make text variable */
 	buffer_text	= (text*)palloc(VARHDRSZ + buffer->len);
@@ -844,13 +852,13 @@ call_xml_response_deserialize_callback(WWW_fdw_options *opts, Oid opts_type, Dat
 	 * it parses/checks xml string and returns casted variable
 	 */
 	xml	= xmlparse(buffer_text, XMLOPTION_DOCUMENT, true);
-	values[1]	= XmlPGetDatum(xml);
+	opts_values[1]	= XmlPGetDatum(xml);
 
 	/* do callback */
 	initStringInfo(&cmd);
-	appendStringInfo(&cmd, "SELECT %s($1,$2)", opts->response_deserialize_callback);
+	appendStringInfo(&cmd, "SELECT * FROM %s($1,$2)", opts->response_deserialize_callback);
 
-	res	= SPI_execute_with_args(cmd.data, 2, argtypes, values, NULL, true, 0);
+	res	= SPI_execute_with_args(cmd.data, 2, opts_argtypes, opts_values, NULL, true, 0);
 	if(0 > res)
 	{
 		ereport(ERROR,
@@ -870,8 +878,46 @@ call_xml_response_deserialize_callback(WWW_fdw_options *opts, Oid opts_type, Dat
 	reply->opts_value	= opts_value;
 	/* copy tuples structure: there can be further calls to SPI_exec* */
 	reply->tuples	= (HeapTuple*)palloc(reply->ntuples * sizeof(HeapTuple));
+
+	/* find correspondence between returned columns and columns we need to return */
+	natts = rel->rd_att->natts;
+	columns	= (int16*)palloc(natts * sizeof(int16));
+	names	= (char**)palloc(SPI_tuptable->tupdesc->natts * sizeof(char*));
+	for( i=1; i<=SPI_tuptable->tupdesc->natts; i++ )
+		names[i]	= SPI_fname(SPI_tuptable->tupdesc, i);
+
+	for( i=0; i<natts; i++ )
+	{
+		columns[i]	= -1;
+
+		for( j=1; j<=SPI_tuptable->tupdesc->natts; j++ )
+		{
+			if(0 == namestrcmp(&rel->rd_att->attrs[i]->attname, names[j]))
+			{
+				columns[i]	= j;
+				break;
+			}
+		}
+	}
+	pfree(names);
+
+	/* find column places */
+	values = (char **) palloc(sizeof(char *) * natts);
 	for( i=0; i<reply->ntuples; i++ )
-		reply->tuples[i]	= SPI_copytuple(SPI_tuptable->vals[i]);
+	{
+		for( j=0; j<natts; j++ )
+		{
+			if(-1 == columns[j])
+				values[j]	= NULL;
+			else
+				values[j]	= SPI_getvalue(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, columns[j]);
+		}
+
+		reply->tuples[i] = BuildTupleFromCStrings(attinmeta, values);
+	}
+	pfree(values);
+
+	pfree(columns);
 
 	return	reply;
 }
@@ -1287,7 +1333,7 @@ www_begin(ForeignScanState *node, int eflags)
 	{
 		if(opts->response_deserialize_callback)
 		{
-			node->fdw_state = (void*)call_xml_response_deserialize_callback(opts, opts_type, opts_value, &buffer);
+			node->fdw_state = (void*)call_xml_response_deserialize_callback(node, opts, opts_type, opts_value, &buffer);
 		}
 		else
 		{
@@ -1474,7 +1520,8 @@ write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp)
 }
 
 /*
- * Fetch the options for a mysql_fdw foreign table.
+ * get_options
+ * fetch the options for a mysql_fdw foreign table.
  */
 static void
 get_options(Oid foreigntableid, WWW_fdw_options *opts)
