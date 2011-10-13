@@ -129,6 +129,10 @@ static size_t json_write_data_to_parser(void *buffer, size_t size, size_t nmemb,
 static size_t xml_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp);
 static size_t write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp);
 
+/*
+ * parse_parameter
+ * parse single passed parameter
+ */
 static bool
 parse_parameter(char* name, char** var, DefElem* param)
 {
@@ -145,6 +149,10 @@ parse_parameter(char* name, char** var, DefElem* param)
 	return	false;
 }
 
+/*
+ * www_fdw_validator
+ * FDW callback realization
+ */
 Datum
 www_fdw_validator(PG_FUNCTION_ARGS)
 {
@@ -248,6 +256,10 @@ www_is_valid_option(const char *option, Oid context)
 	return false;
 }
 
+/*
+ * www_fdw_handler
+ * setup FDW handlers/callbacks
+ */
 Datum
 www_fdw_handler(PG_FUNCTION_ARGS)
 {
@@ -267,6 +279,10 @@ www_fdw_handler(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(fdwroutine);
 }
 
+/*
+ * percent_encode
+ * used for url encoding
+ */
 static char *
 percent_encode(unsigned char *s, int srclen)
 {
@@ -399,6 +415,10 @@ www_explain(ForeignScanState *node, ExplainState *es)
 	ExplainPropertyText("WWW API", "Request", es);
 }
 
+/*
+ * describe_spi_code
+ * return string description for spi function return code
+ */
 static
 char*
 describe_spi_code(int code)
@@ -796,6 +816,11 @@ json_get_result_array_in_tree(JSONNode* root, TupleDesc tuple_desc)
 	return	NULL;
 }
 
+/*
+ * call_xml_response_deserialize_callback
+ * call to response_deserialize_callback for "xml" response_type
+ * prepare/setup reply structure from it's answer
+ */
 static
 Reply*
 call_xml_response_deserialize_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts_value, StringInfoData *buffer)
@@ -851,6 +876,11 @@ call_xml_response_deserialize_callback(WWW_fdw_options *opts, Oid opts_type, Dat
 	return	reply;
 }
 
+/*
+ * get_www_fdw_options
+ * get Oid for options type, set up Datum value for it properly
+ * will be used to pass it to callbacks
+ */
 static
 void
 get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
@@ -911,6 +941,10 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 	}
 }
 
+/*
+ * json2string
+ * convert JSONNode* element to string
+ */
 static
 char*
 json2string(JSONNode* json)
@@ -949,6 +983,10 @@ json2string(JSONNode* json)
 	return	NULL;
 }
 
+/*
+ * prepare_xml_result
+ * go through parsed result and prepare reply/result structure
+ */
 static
 Reply*
 prepare_xml_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type, Datum opts_value, xmlDocPtr doc)
@@ -1020,6 +1058,10 @@ prepare_xml_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type,
 	return	reply;
 }
 
+/*
+ * prepare_json_result
+ * go through parsed result and prepare reply/result structure
+ */
 static
 Reply*
 prepare_json_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type, Datum opts_value, JSONNode *root)
@@ -1318,6 +1360,7 @@ www_iterate(ForeignScanState *node)
 
 /*
  * www_rescan
+ * FDW rescan handler/callback
  */
 static void
 www_rescan(ForeignScanState *node)
@@ -1327,6 +1370,10 @@ www_rescan(ForeignScanState *node)
 	reply->tuple_index	= 0;
 }
 
+/*
+ * www_end
+ * FDW end handler/callback
+ */
 static void
 www_end(ForeignScanState *node)
 {
