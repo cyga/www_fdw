@@ -91,8 +91,14 @@ typedef struct Reply
 	int				row_index;
 	void			*ptr_index;
 	WWW_fdw_options	*options;
-	Oid			  	*opts_type;
-	Datum		  	*opts_value;
+
+
+	HeapTuple		*tuples;	/* array with result tuples */
+	uint32			ntuples;	/* number of results */
+	int				tuple_index;
+	WWW_fdw_options	*opts;
+	Oid			  	opts_type;
+	Datum		  	opts_value;
 } Reply;
 
 static bool www_is_valid_option(const char *option, Oid context);
@@ -441,12 +447,12 @@ describe_spi_code(int code)
  *		2. out parameters for: request string and others
  */
 static void
-serialize_request_with_callback(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value, ForeignScanState *node, StringInfoData *url)
+serialize_request_with_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts_value, ForeignScanState *node, StringInfoData *url)
 {
 	int	res;
 	StringInfoData	cmd;
-	Oid	argtypes[1]	= { *opts_type };
-	Datum values[1]	= { *opts_value };
+	Oid	argtypes[1]	= { opts_type };
+	Datum values[1]	= { opts_value };
 
 	initStringInfo(&cmd);
 	// TODO: add 2nd parameter - qual converted correspondingly
@@ -791,17 +797,18 @@ json_get_result_array_in_tree(JSONNode* root, TupleDesc tuple_desc)
 }
 
 static
-void
-call_xml_response_deserialize_callback(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value, StringInfoData *buffer)
+Reply*
+call_xml_response_deserialize_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts_value, StringInfoData *buffer)
 {
 	text	*buffer_text;
 	xmltype	*xml;
-	int		res;
+	int		res, i;
 	StringInfoData	cmd;
-	Oid		argtypes[2]	= { *opts_type, XMLOID };
+	Oid		argtypes[2]	= { opts_type, XMLOID };
 	Datum	 values[2];
+	Reply	*reply;
 
-	values[0]	= *opts_value;
+	values[0]	= opts_value;
 
 	/* make text variable */
 	buffer_text	= (text*)palloc(VARHDRSZ + buffer->len);
@@ -828,11 +835,20 @@ call_xml_response_deserialize_callback(WWW_fdw_options *opts, Oid *opts_type, Da
 			)
 		);
 	}
-	else
-	{
-		// TODO: process results
-		//SPI_tuptable->vals->
-	}
+
+	/* save result to output parameters */
+	reply		= (Reply*)palloc(sizeof(Reply));
+	reply->ntuples	= SPI_processed;
+	reply->tuple_index	= 0;
+	reply->opts			= opts;
+	reply->opts_type	= opts_type;
+	reply->opts_value	= opts_value;
+	/* copy tuples structure: there can be further calls to SPI_exec* */
+	reply->tuples	= (HeapTuple*)palloc(reply->ntuples * sizeof(HeapTuple));
+	for( i=0; i<reply->ntuples; i++ )
+		reply->tuples[i]	= SPI_copytuple(SPI_tuptable->vals[i]);
+
+	return	reply;
 }
 
 static
@@ -895,294 +911,6 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 	}
 }
 
-/*
- * www_begin
- *   Query search API and setup result
- */
-static void
-www_begin(ForeignScanState *node, int eflags)
-{
-	WWW_fdw_options	*opts;
-	CURL			*curl;
-	char			curl_error_buffer[CURL_ERROR_SIZE+1]	= {0};
-	CURLcode		ret;
-	StringInfoData	url;
-	json_parser		json_parserr;
-	json_parser_dom json_dom;
-	xmlParserCtxtPtr	xml_parserr	= NULL;
-	StringInfoData	buffer;
-	Relation		rel;
-	AttInMetadata	*attinmeta;
-	Reply			*reply;
-	int				res;
-	Oid				*opts_type	= NULL;
-	Datum			*opts_value	= NULL;
-
-	elog(DEBUG1, "www_begin routine");
-
-	/*
-	 * Do nothing in EXPLAIN
-	 */
-	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
-		return;
-
-	elog(DEBUG1, "www_begin routine, not explain only call");
-
-	res	= SPI_connect();
-	if(SPI_OK_CONNECT != res)
-	{
-		ereport(ERROR,
-			(
-				errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("Can't spi connect: %i (%s)", res, describe_spi_code(res))
-			)
-		);
-	}
-
-	opts	= (WWW_fdw_options*)palloc(sizeof(WWW_fdw_options));
-	get_options( RelationGetRelid(node->ss.ss_currentRelation), opts );
-
-	initStringInfo(&url);
-	appendStringInfo(&url, "%s%s", opts->uri, opts->uri_select);
-
-	/* initialize options type and value if any of callback specified */
-	if(
-		opts->request_serialize_callback
-		||
-		opts->response_deserialize_callback
-		||
-		opts->response_iterate_callback
-	)
-	{
-		opts_type	= (Oid*)palloc(sizeof(Oid));
-		opts_value	= (Datum*)palloc(sizeof(Datum));
-		get_www_fdw_options(opts, opts_type, opts_value);
-	}
-
-	if(opts->request_serialize_callback)
-	{
-		/* call specified callback for forming request */
-		/* TODO */
-		/* serialize_request_with_callback(opts, node, &url, &struct4otherParams); */
-		serialize_request_with_callback(opts, opts_type, opts_value, node, &url);
-	}
-	else
-	{
-		serialize_request_parameters(node, &url);
-	}
-
-	elog(DEBUG1, "Url for request: '%s'", url.data);
-
-	/* TODO interacting with the server */
-	curl = curl_easy_init();
-	curl_easy_setopt(curl, CURLOPT_URL, url.data);
-	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error_buffer);
-
-	/* prepare parsers */
-	if( 0 == strcmp(opts->response_type, "json") )
-	{
-		if(opts->response_deserialize_callback)
-		{
-			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
-			initStringInfo(&buffer);
-			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
-		}
-		else
-		{
-			json_parser_init2(&json_parserr, &json_dom);
-			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, json_write_data_to_parser);
-			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &json_parserr);
-		}
-	}
-	else if( 0 == strcmp(opts->response_type, "xml") )
-	{
-		if(opts->response_deserialize_callback)
-		{
-			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
-			initStringInfo(&buffer);
-			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
-		}
-		else
-		{
-			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, xml_write_data_to_parser);
-			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &xml_parserr);
-		}
-	}
-	else if( 0 == strcmp(opts->response_type, "other") )
-	{
-		/* TODO */
-	}
-	else
-	{
-		ereport(ERROR,
-			(errcode(ERRCODE_SYNTAX_ERROR),
-			errmsg("Invalid value for response_type option: %s", opts->response_type)
-			));
-	}
-
-	ret = curl_easy_perform(curl);
-	curl_easy_cleanup(curl);
-	if(ret) {
-		ereport(ERROR,
-			(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
-			errmsg("Can't get a response from server: %s", curl_error_buffer)
-			));
-	}
-
-	/* process parsed results */
-	if( 0 == strcmp(opts->response_type, "json") )
-	{
-		if(opts->response_deserialize_callback)
-		{
-			/* TODO
-			 *	call callback with accumulated json response
-			 *	save returned set of records,
-			 *	for further iterating them in iterate routine
-			*/
-			/* save result */
-			reply = (Reply*)palloc(sizeof(Reply));
-			reply->root = NULL;
-			reply->result = NULL;
-			reply->attinmeta = NULL;
-			reply->row_index = 0;
-			reply->ptr_index = NULL;
-			reply->options = opts;
-			reply->opts_type = opts_type;
-			reply->opts_value = opts_value;
-			node->fdw_state = (void *) reply;
-		}
-		else
-		{
-			/* get result in parsed response tree
-			 * and save it for further processing in results iterations
-			*/
-
-			JSONNode	*root	= json_result_tree(&json_parserr),
-						*result;
-
-			if(!root)
-				ereport(ERROR,
-					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
-					errmsg("Can't parse server's json response, parser error code: %i", ret)
-					));
-
-			elog(DEBUG1, "JSON response was parsed");
-
-			rel = node->ss.ss_currentRelation;
-			attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
-
-			result	= json_get_result_array_in_tree(root, rel->rd_att);
-			if(!result)
-				ereport(ERROR,
-					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
-					errmsg("Can't find result in parsed server's json response")
-					));
-
-			elog(DEBUG1, "Result array was found in json response");
-
-			/* save result */
-			reply = (Reply*)palloc(sizeof(Reply));
-			reply->root = root;
-			reply->result = result;
-			reply->attinmeta = attinmeta;
-			reply->row_index = 0;
-			reply->options = opts;
-			reply->opts_type = opts_type;
-			reply->opts_value = opts_value;
-			node->fdw_state = (void *) reply;
-
-			json_parser_free(&json_parserr);
-
-			/* TODO: where to free up json parsed tree?
-			 * rewrite it using palloc?
-			*/
-			/*json_free_tree(root);*/
-		}
-	}
-	else if( 0 == strcmp(opts->response_type, "xml") )
-	{
-		if(opts->response_deserialize_callback)
-		{
-			/* TODO
-			 *	call callback with accumulated xml response
-			 *	save returned set of records,
-			 *	for further iterating them in iterate routine
-			 * what is result of following function?
-			*/
-			call_xml_response_deserialize_callback( opts, opts_type, opts_value, &buffer );
-
-			/* save result */
-			reply = (Reply*)palloc(sizeof(Reply));
-			reply->root = NULL;
-			reply->result = NULL;
-			reply->attinmeta = NULL;
-			reply->row_index = 0;
-			reply->ptr_index = NULL;
-			reply->options = opts;
-			reply->opts_type = opts_type;
-			reply->opts_value = opts_value;
-			node->fdw_state = (void *) reply;
-		}
-		else
-		{
-			/* get result in parsed response tree
-			 * and save it for further processing in results iterations
-			*/
-
-			xmlDocPtr	doc		= NULL;
-			xmlNodePtr	result	= NULL;
-			int			res;
-
-			/* there is no more input, indicate the parsing is finished */
-		    xmlParseChunk(xml_parserr, curl_error_buffer, 0, 1);
-
-			doc	= xml_parserr->myDoc;
-			res	= xml_parserr->wellFormed;
-
-			xmlFreeParserCtxt(xml_parserr);
-
-			if(!res)
-				ereport(ERROR,
-					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
-					errmsg("Response xml isn't well formed")
-					));
-
-			elog(DEBUG1, "Xml response was parsed");
-
-			rel = node->ss.ss_currentRelation;
-			attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
-
-			result	= xml_get_result_array_in_doc(doc, rel->rd_att);
-			if(!result)
-				ereport(ERROR,
-					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
-					errmsg("Can't find result in parsed server's xml response")
-					));
-
-			elog(DEBUG1, "Result array was found in xml response");
-
-			/* save result */
-			reply = (Reply*)palloc(sizeof(Reply));
-			reply->root = doc;
-			reply->result = result;
-			reply->attinmeta = attinmeta;
-			reply->row_index = 0;
-			reply->ptr_index = result->children;
-			reply->options = opts;
-			reply->opts_type = opts_type;
-			reply->opts_value = opts_value;
-			node->fdw_state = (void *) reply;
-
-			/* TODO: where to free up xml doc?*/
-			/*xmlFreeDoc(doc);*/
-		}
-	}
-	else if( 0 == strcmp(opts->response_type, "other") )
-	{
-		/* TODO */
-	}
-}
-
 static
 char*
 json2string(JSONNode* json)
@@ -1221,6 +949,341 @@ json2string(JSONNode* json)
 	return	NULL;
 }
 
+static
+Reply*
+prepare_xml_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type, Datum opts_value, xmlDocPtr doc)
+{
+	xmlNodePtr	result	= NULL,
+		it = NULL,
+		itc= NULL;
+	Relation	rel;
+	AttInMetadata	*attinmeta;
+	Reply			*reply;
+	xmlChar			**attnames;
+	int				i,j, natts;
+	char			**values	= NULL;
+
+	rel = node->ss.ss_currentRelation;
+	attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
+
+	result	= xml_get_result_array_in_doc(doc, rel->rd_att);
+	if(!result)
+		ereport(ERROR,
+				(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+				 errmsg("Can't find result in parsed server's xml response")
+					));
+
+	elog(DEBUG1, "Result array was found in xml response");
+
+	/* save result */
+	reply = (Reply*)palloc(sizeof(Reply));
+	reply->tuple_index = 0;
+	reply->options = opts;
+	reply->opts_type = opts_type;
+	reply->opts_value = opts_value;
+
+	/* calculate number of results */
+	reply->ntuples = 0;
+	for( it = result->children; NULL != it; it = it->next )
+		reply->ntuples++;
+
+	reply->tuples = (HeapTuple*)palloc(reply->ntuples * sizeof(HeapTuple));
+
+	/* prepare result column names in xmlChar* for proper comparison */
+	natts = rel->rd_att->natts;
+	attnames	= (xmlChar**)palloc(natts * sizeof(xmlChar*));
+	for (i = 0; i < natts; i++)
+		attnames[i]	= xmlCharStrndup(rel->rd_att->attrs[i]->attname.data, strlen(rel->rd_att->attrs[i]->attname.data));
+
+	/* find column places */
+	values = (char **) palloc(sizeof(char *) * natts);
+	for( it = result->children, j=0 ; NULL != it; it = it->next, j++ )
+	{
+		for (i = 0; i < natts; i++)
+		{
+			for( itc = it->children; NULL != itc; itc = itc->next )
+				if(1 == xmlStrEqual(attnames[i], itc->name))
+					break;
+
+			if(itc)
+				values[i]	= (char*)itc->children->content;
+			else
+				values[i]	= NULL;
+		}
+
+		reply->tuples[j] = BuildTupleFromCStrings(attinmeta, values);
+	}
+	pfree(values);
+
+	pfree(attnames);
+
+	return	reply;
+}
+
+static
+Reply*
+prepare_json_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type, Datum opts_value, JSONNode *root)
+{
+	JSONNode		*result, json_obj;
+	Relation		rel;
+	AttInMetadata	*attinmeta;
+	Reply			*reply;
+	int				i,j,k, natts;
+	char			**values	= NULL;
+
+	rel = node->ss.ss_currentRelation;
+	attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
+
+	result	= json_get_result_array_in_tree(root, rel->rd_att);
+	if(!result)
+		ereport(ERROR,
+				(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+				 errmsg("Can't find result in parsed server's json response")
+					));
+
+	elog(DEBUG1, "Result array was found in json response");
+
+	/* prepare result */
+	reply = (Reply*)palloc(sizeof(Reply));
+	reply->tuple_index = 0;
+	reply->options = opts;
+	reply->opts_type = opts_type;
+	reply->opts_value = opts_value;
+	reply->ntuples	= result->length;
+	reply->tuples	= (HeapTuple*)palloc(result->length * sizeof(HeapTuple));
+
+	natts = rel->rd_att->natts;
+	values = (char **) palloc(sizeof(char *) * natts);
+	for( i=0; i<result->length; i++ )
+	{
+		/* find column places */
+		json_obj = result->val.val_array[i];
+		for( j=0; j<natts; j++ )
+		{
+			for( k=0; k<json_obj.length; k++ )
+				if(0 == namestrcmp(&rel->rd_att->attrs[j]->attname, json_obj.val.val_object[k].key))
+					break;
+
+			if(k < json_obj.length)
+				values[j]	= json2string(&(json_obj.val.val_object[k]));
+			else
+				values[j]	= NULL;
+		}
+
+		reply->tuples[i] = BuildTupleFromCStrings(attinmeta, values);
+	}
+	pfree(values);
+
+	return	reply;
+}
+
+/*
+ * www_begin
+ *   Query search API and setup result
+ */
+static void
+www_begin(ForeignScanState *node, int eflags)
+{
+	WWW_fdw_options	*opts;
+	CURL			*curl;
+	char			curl_error_buffer[CURL_ERROR_SIZE+1]	= {0};
+	CURLcode		ret;
+	StringInfoData	url;
+	json_parser		json_parserr;
+	json_parser_dom json_dom;
+	xmlParserCtxtPtr	xml_parserr	= NULL;
+	StringInfoData	buffer;
+	Reply			*reply;
+	int				res;
+	Oid				opts_type	= 0;
+	Datum			opts_value	= 0;
+
+	elog(DEBUG1, "www_begin routine");
+
+	/*
+	 * Do nothing in EXPLAIN
+	 */
+	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
+		return;
+
+	elog(DEBUG1, "www_begin routine, not explain only call");
+
+	res	= SPI_connect();
+	if(SPI_OK_CONNECT != res)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("Can't spi connect: %i (%s)", res, describe_spi_code(res))
+			)
+		);
+	}
+
+	opts	= (WWW_fdw_options*)palloc(sizeof(WWW_fdw_options));
+	get_options( RelationGetRelid(node->ss.ss_currentRelation), opts );
+
+	initStringInfo(&url);
+	appendStringInfo(&url, "%s%s", opts->uri, opts->uri_select);
+
+	/* initialize options type and value if any of callback specified */
+	if(
+		opts->request_serialize_callback
+		||
+		opts->response_deserialize_callback
+		||
+		opts->response_iterate_callback
+	)
+	{
+		get_www_fdw_options(opts, &opts_type, &opts_value);
+	}
+
+	if(opts->request_serialize_callback)
+	{
+		/* call specified callback for forming request */
+		/* TODO */
+		/* serialize_request_with_callback(opts, node, &url, &struct4otherParams); */
+		serialize_request_with_callback(opts, opts_type, opts_value, node, &url);
+	}
+	else
+	{
+		serialize_request_parameters(node, &url);
+	}
+
+	elog(DEBUG1, "Url for request: '%s'", url.data);
+
+	/* interacting with the server */
+	curl = curl_easy_init();
+	curl_easy_setopt(curl, CURLOPT_URL, url.data);
+	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error_buffer);
+
+	/* prepare parsers */
+	if( 0 == strcmp(opts->response_type, "json") )
+	{
+		if(opts->response_deserialize_callback)
+		{
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
+			initStringInfo(&buffer);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+		}
+		else
+		{
+			json_parser_init2(&json_parserr, &json_dom);
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, json_write_data_to_parser);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &json_parserr);
+		}
+	}
+	else if( 0 == strcmp(opts->response_type, "xml") )
+	{
+		if(opts->response_deserialize_callback)
+		{
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_to_buffer);
+			initStringInfo(&buffer);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+		}
+		else
+		{
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, xml_write_data_to_parser);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &xml_parserr);
+		}
+	}
+	else if( 0 == strcmp(opts->response_type, "other") )
+	{
+		/* TODO */
+	}
+
+	ret = curl_easy_perform(curl);
+	curl_easy_cleanup(curl);
+	if(ret) {
+		ereport(ERROR,
+			(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+			errmsg("Can't get a response from server: %s", curl_error_buffer)
+			));
+	}
+
+	/* process parsed results */
+	if( 0 == strcmp(opts->response_type, "json") )
+	{
+		if(opts->response_deserialize_callback)
+		{
+			/* TODO
+			 *	call callback with accumulated json response
+			 *	save returned set of records,
+			 *	for further iterating them in iterate routine
+			*/
+			/* save result */
+			reply = (Reply*)palloc(sizeof(Reply));
+			reply->root = NULL;
+			reply->result = NULL;
+			reply->attinmeta = NULL;
+			reply->row_index = 0;
+			reply->ptr_index = NULL;
+			reply->options = opts;
+			reply->opts_type = opts_type;
+			reply->opts_value = opts_value;
+			node->fdw_state = (void *) reply;
+		}
+		else
+		{
+			JSONNode	*root	= json_result_tree(&json_parserr);
+
+			if(!root)
+				ereport(ERROR,
+						(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+						 errmsg("Can't parse server's json response, parser error code: %i", ret)
+							));
+
+			elog(DEBUG1, "JSON response was parsed");
+
+			node->fdw_state = (void*)prepare_json_result(node, opts, opts_type, opts_value, root);
+
+			json_parser_free(&json_parserr);
+			/* all data from tree was trully copid, free it up: */
+			json_free_tree(root);
+		}
+	}
+	else if( 0 == strcmp(opts->response_type, "xml") )
+	{
+		if(opts->response_deserialize_callback)
+		{
+			node->fdw_state = (void*)call_xml_response_deserialize_callback(opts, opts_type, opts_value, &buffer);
+		}
+		else
+		{
+			/* get result in parsed response tree
+			 * and save it for further processing in results iterations
+			*/
+
+			xmlDocPtr	doc		= NULL;
+			int			res;
+
+			/* there is no more input, indicate the parsing is finished */
+		    xmlParseChunk(xml_parserr, curl_error_buffer, 0, 1);
+
+			doc	= xml_parserr->myDoc;
+			res	= xml_parserr->wellFormed;
+
+			xmlFreeParserCtxt(xml_parserr);
+
+			if(!res)
+				ereport(ERROR,
+					(errcode(ERRCODE_FDW_INVALID_STRING_FORMAT),
+					errmsg("Response xml isn't well formed")
+					));
+
+			elog(DEBUG1, "Xml response was parsed");
+
+			node->fdw_state = (void*)prepare_xml_result(node, opts, opts_type, opts_value, doc);
+
+			/* result data was trully copid: free it up */
+			xmlFreeDoc(doc);
+		}
+	}
+	else if( 0 == strcmp(opts->response_type, "other") )
+	{
+		/* TODO */
+	}
+}
+
 /*
  * www_iterate
  *   return row per each call
@@ -1231,131 +1294,25 @@ www_iterate(ForeignScanState *node)
 	TupleTableSlot	*slot	= node->ss.ss_ScanTupleSlot;
 	Reply			*reply	= (Reply*)node->fdw_state;
 	HeapTuple		tuple;
-	Relation		rel = node->ss.ss_currentRelation;
-	int				i,j, natts;
-	char			**values;
 	MemoryContext	oldcontext;
-	JSONNode		*json_root		= NULL,
-					*json_result	= NULL,
-					json_obj;
-	xmlDocPtr		xml_doc		= NULL;
-	xmlNodePtr		xml_result	= NULL,
-					it			= NULL,
-					xml_obj;
 
 	elog(DEBUG1, "www_iterate routine");
 
-	if( 0 == strcmp(reply->options->response_type, "json") )
+	/* no results or results finished */
+	if(!reply->tuples || !(reply->tuple_index < reply->ntuples))
 	{
-		if(reply->options->response_deserialize_callback)
-		{
-			/* TODO case of callback */
-		}
-		else
-		{
-			/* get saved/parsed result */
-			json_root	= (JSONNode*)reply->root;
-			json_result	= (JSONNode*)reply->result;
-
-			/* no results or results finished */
-			if(!json_root || !json_result || !(reply->row_index < json_result->length))
-			{
-				ExecClearTuple(slot);
-				return slot;
-			}
-
-			/* prepare/find column places, make iteration (++ statement) */
-			json_obj = json_result->val.val_array[reply->row_index++];
-			natts = rel->rd_att->natts;
-			values = (char **) palloc(sizeof(char *) * natts);
-			for (i = 0; i < natts; i++)
-			{
-				Name	attname = &rel->rd_att->attrs[i]->attname;
-
-				for( j=0; j<json_obj.length; j++ )
-					if(0 == namestrcmp(attname, json_obj.val.val_object[j].key))
-						break;
-
-				if(j < json_obj.length)
-					values[i]	= json2string(&(json_obj.val.val_object[j]));
-				else
-					values[i]	= NULL;
-			}
-			oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
-			tuple = BuildTupleFromCStrings(reply->attinmeta, values);
-			MemoryContextSwitchTo(oldcontext);
-			ExecStoreTuple(tuple, slot, InvalidBuffer, true);
-
-			return slot;
-		}
-	}
-	else if( 0 == strcmp(reply->options->response_type, "xml") )
-	{
-		if(reply->options->response_deserialize_callback)
-		{
-			/* TODO case of callback */
-			elog(ERROR,"TODO: to implement");
-		}
-		else
-		{
-			/* get saved/parsed result */
-			xml_doc		= (xmlDocPtr)reply->root;
-			xml_result	= (xmlNodePtr)reply->result;
-			xml_obj = reply->ptr_index;
-
-			/* no results or results finished */
-			if(!xml_doc || !xml_result || !xml_obj || !reply->ptr_index)
-			{
-				ExecClearTuple(slot);
-				return slot;
-			}
-
-			/* next iteration */
-			reply->ptr_index	= xml_obj->next;
-
-			/* prepare/find column places */
-			natts = rel->rd_att->natts;
-			values = (char **) palloc(sizeof(char *) * natts);
-			for (i = 0; i < natts; i++)
-			{
-				xmlChar	*attname	= xmlCharStrndup(rel->rd_att->attrs[i]->attname.data, strlen(rel->rd_att->attrs[i]->attname.data));
-
-				for( it = xml_obj->children; NULL != it; it = it->next )
-					if(1 == xmlStrEqual(attname, it->name))
-						break;
-
-				if(it)
-					values[i]	= (char*)it->children->content;
-				else
-					values[i]	= NULL;
-			}
-			oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
-			tuple = BuildTupleFromCStrings(reply->attinmeta, values);
-			MemoryContextSwitchTo(oldcontext);
-			ExecStoreTuple(tuple, slot, InvalidBuffer, true);
-
-			return slot;
-		}
-	}
-	else if( 0 == strcmp(reply->options->response_type, "other") )
-	{
-		/* TODO */
-	}
-	else
-	{
-		ereport(ERROR,
-			(errcode(ERRCODE_SYNTAX_ERROR),
-			errmsg("Invalid value for response_type option: %s", reply->options->response_type)
-			));
+		ExecClearTuple(slot);
+		return slot;
 	}
 
-	ereport(ERROR,
-		(errcode(ERRCODE_SYNTAX_ERROR),
-		errmsg("Invalid code branch launched")
-		));
+	/* TODO: call iterate callback if any */
 
-	/* remove warning */
-	ExecClearTuple(slot);
+	/* copy tuple, increment iterator */
+	oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
+	tuple = heap_copytuple(reply->tuples[reply->tuple_index++]);
+	MemoryContextSwitchTo(oldcontext);
+	ExecStoreTuple(tuple, slot, InvalidBuffer, true);
+
 	return slot;
 }
 
@@ -1366,16 +1323,8 @@ static void
 www_rescan(ForeignScanState *node)
 {
 	Reply	   *reply = (Reply *) node->fdw_state;
-	reply->row_index	= 0;
 
-	if( 0 == strcmp(reply->options->response_type, "xml") )
-	{
-		xmlNodePtr	result	= (xmlNodePtr)reply->result;
-		if(NULL == result)
-			reply->ptr_index	= NULL;
-		else
-			reply->ptr_index	= result->children;
-	}
+	reply->tuple_index	= 0;
 }
 
 static void
