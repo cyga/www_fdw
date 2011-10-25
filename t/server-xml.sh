@@ -12,14 +12,52 @@ $psql -f "$test_dir/default-xml.sql"
 perl -Mojo -e'a("/" => {text => "<doc><nrows>3</nrows><rows><row><title>3</title></row></rows></doc>"})->start' daemon --listen http://*:7777 &
 spid=$!
 sleep $waits
-r=`$psql -tA -c'select * from www_fdw_test'`
-test "$r" $'3||'
+
+sql="select * from www_fdw_test"
+r=`$psql -tA -c"$sql"`
+test "$r" $'3||' "$sql"
+
+sql="select * from www_fdw_test limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'3||' "$sql"
+
+sql="select * from www_fdw_test order by title"
+r=`$psql -tA -c"$sql"`
+test "$r" $'3||' "$sql"
+
+sql="select * from www_fdw_test order by title desc"
+r=`$psql -tA -c"$sql"`
+test "$r" $'3||' "$sql"
+
+sql="select * from www_fdw_test order by title limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'3||' "$sql"
+
 kill $spid
 
 perl -Mojo -e'a("/" => {text => "<doc><nrows>3</nrows><rows><row><title>3</title><snippet>SNIPPeT</snippet></row><row><title>TiTuL</title><snippet>SNIPPeT2</snippet></row></rows></doc>"})->start' daemon --listen http://*:7777 &
 spid=$!
 sleep $waits
-r=`$psql -tA -c'select * from www_fdw_test'`
-test "$r" $'3||SNIPPeT\nTiTuL||SNIPPeT2'
+
+sql="select * from www_fdw_test"
+r=`$psql -tA -c"$sql"`
+test "$r" $'3||SNIPPeT\nTiTuL||SNIPPeT2' "$sql"
+
+sql="select * from www_fdw_test limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'3||SNIPPeT' "$sql"
+
+sql="select * from www_fdw_test order by snippet"
+r=`$psql -tA -c"$sql"`
+test "$r" $'3||SNIPPeT\nTiTuL||SNIPPeT2' "$sql"
+
+sql="select * from www_fdw_test order by snippet desc"
+r=`$psql -tA -c"$sql"`
+test "$r" $'TiTuL||SNIPPeT2\n3||SNIPPeT' "$sql"
+
+sql="select * from www_fdw_test order by title limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'3||SNIPPeT' "$sql"
+
 kill $spid
 
