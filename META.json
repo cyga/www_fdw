@@ -1,0 +1,25 @@
+{
+   "name": "www_fdw",
+   "abstract": "FDW extension for different web services",
+   "tags": ["fdw", "www", "web service"],
+   "resources": {
+   	"bugtracker": {
+	    "web": "http://github.com/cyga/www_fdw/issues"
+	},
+	"repository": {
+	    "url": "git://github.com/cyga/www_fdw.git",
+	    "web": "http://github.com/cyga/www_fdw",
+	    "type": "git"
+	}
+   },
+   "release_status": "testing",
+   "version": "0.1.0",
+   "maintainer": [
+       "Alex Sudakov <cygakob@gmail.com>"
+   ],
+   "license": "postgresql",
+   "meta-spec": {
+      "version": "1.0.0",
+      "url": "http://pgxn.org/meta/spec.txt"
+   },
+}
