@@ -5,10 +5,12 @@ function test
 {
 	if [ "$1" == "$2" ]; then
 		let success=$success+1
-		echo "Ok"
+		echo "Ok       $3"
 	else
 		let failed=$failed+1
-		echo "Failed"
+		echo "Failed   $3"
+		echo -e "  Result: '$1'"
+		echo -e "  Expected: '$2'"
 	fi
 }
 trap 'let all=$success+$failed;echo;echo "Tests run: $all";echo "Ok: $success";echo "Failed: $failed"' EXIT
