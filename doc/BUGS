@@ -1,0 +1,11 @@
+* for case of "limit 1" for json/xml deserialize callback
+
+postgres=# select * from www_fdw_test ;
+ title | link | snippet 
+-------+------+---------
+ "t0"  | "l0" | "s0"
+ "t1"  | "l1" | "s1"
+(2 rows)
+
+postgres=# select * from www_fdw_test limit 1;
+ERROR:  tupdesc reference 0x8bf24d0 is not owned by resource owner Portal

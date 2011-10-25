@@ -1,0 +1,22 @@
+* Test case 
+   deserialize callback.
+1/4 day
+
+* deserialize callback
+   ** test case of compilation server without xml support, for
+   specified
+   1/4 day
+   ** for json
+   1/2 day
+
+* request serialize callbacks
+3 days
+
+* more tests and fixes
+2 days
+
+* preparing PGXS package
+1 day
+
+* case insensitive select for oid?
+1 hour
