@@ -85,17 +85,10 @@ typedef struct	WWW_fdw_options
 
 typedef struct Reply
 {
-	void		   *root;
-	void		   *result;
-	AttInMetadata  *attinmeta;
-	int				row_index;
-	void			*ptr_index;
-	WWW_fdw_options	*options;
-
 	HeapTuple		*tuples;	/* array with result tuples */
 	uint32			ntuples;	/* number of results */
 	int				tuple_index;
-	WWW_fdw_options	*opts;
+	WWW_fdw_options	*options;
 	Oid			  	opts_type;
 	Datum		  	opts_value;
 } Reply;
@@ -885,7 +878,7 @@ call_json_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options 
 	reply		= (Reply*)palloc(sizeof(Reply));
 	reply->ntuples	= SPI_processed;
 	reply->tuple_index	= 0;
-	reply->opts			= opts;
+	reply->options		= opts;
 	reply->opts_type	= opts_type;
 	reply->opts_value	= opts_value;
 	/* copy tuples structure: there can be further calls to SPI_exec* */
@@ -956,10 +949,10 @@ Reply*
 call_xml_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type, Datum opts_value, StringInfoData *buffer)
 {
 	text	*buffer_text;
-	xmltype	*xml;
 	int		res, i,j, natts;
 	StringInfoData	cmd;
 #ifdef USE_LIBXML
+	xmltype	*xml;
 	Oid		opts_argtypes[2]	= { opts_type, XMLOID };
 #else
 	Oid		opts_argtypes[2]	= { opts_type, TEXTOID };
@@ -1020,7 +1013,7 @@ call_xml_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options *
 	reply		= (Reply*)palloc(sizeof(Reply));
 	reply->ntuples	= SPI_processed;
 	reply->tuple_index	= 0;
-	reply->opts			= opts;
+	reply->options		= opts;
 	reply->opts_type	= opts_type;
 	reply->opts_value	= opts_value;
 	/* copy tuples structure: there can be further calls to SPI_exec* */
@@ -1513,6 +1506,66 @@ www_begin(ForeignScanState *node, int eflags)
 	}
 }
 
+static
+HeapTuple
+call_response_iterate_callback(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type, Datum opts_value, HeapTuple tuple)
+{
+	int res;
+	StringInfoData cmd;
+	Oid		opts_argtypes[2] = {
+		opts_type,
+		/* doesn't work here, type isn't set for it: */
+		/*HeapTupleGetOid(tuple)*/
+		node->ss.ss_currentRelation->rd_att->tdtypeid
+	};
+	Datum	opts_values[2] = { opts_value, HeapTupleGetDatum(tuple) };
+	HeapTuple rtuple = NULL;
+
+	SPI_connect_wrapper();
+
+	/* do callback */
+	initStringInfo(&cmd);
+	appendStringInfo(&cmd, "SELECT * FROM %s($1,$2)", opts->response_iterate_callback);
+
+	res	= SPI_execute_with_args(cmd.data, 2, opts_argtypes, opts_values, NULL, true, 0);
+	if(0 > res)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("Can't execute response_iterate_callback '%s': %i (%s)", opts->response_iterate_callback, res, describe_spi_code(res))
+			)
+		);
+	}
+
+	if(0 == SPI_processed)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("No results were returned from response_iterate_callback '%s'", opts->response_iterate_callback)
+			)
+		);
+	}
+
+	if(1 < SPI_processed)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("More than 1 result was returned from response_iterate_callback '%s': %i", opts->response_iterate_callback, SPI_processed)
+			)
+		);
+	}
+
+	/* "make a copy of a row in the upper executor context": */
+	rtuple = SPI_copytuple(SPI_tuptable->vals[0]);
+
+	SPI_finish_wrapper();
+
+	return rtuple;
+}
+
 /*
  * www_iterate
  *   return row per each call
@@ -1534,11 +1587,21 @@ www_iterate(ForeignScanState *node)
 		return slot;
 	}
 
-	/* TODO: call iterate callback if any */
-
 	/* copy tuple, increment iterator */
 	oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
-	tuple = heap_copytuple(reply->tuples[reply->tuple_index++]);
+	if(reply->options->response_iterate_callback)
+	{
+		elog(DEBUG1, "call response_iterate_callback");
+
+		tuple = call_response_iterate_callback(
+			node,
+			reply->options,
+			reply->opts_type,
+			reply->opts_value,
+			reply->tuples[reply->tuple_index++]);
+	}
+	else
+		tuple = heap_copytuple(reply->tuples[reply->tuple_index++]);
 	MemoryContextSwitchTo(oldcontext);
 	ExecStoreTuple(tuple, slot, InvalidBuffer, true);
 

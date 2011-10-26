@@ -1,0 +1,14 @@
+diff --git a/src/pl/plpgsql/src/pl_comp.c b/src/pl/plpgsql/src/pl_comp.c
+index 578cae5..cfcd963 100644
+--- a/src/pl/plpgsql/src/pl_comp.c
++++ b/src/pl/plpgsql/src/pl_comp.c
+@@ -1944,7 +1944,8 @@ build_row_from_class(Oid classOid)
+ 	if (classStruct->relkind != RELKIND_RELATION &&
+ 		classStruct->relkind != RELKIND_SEQUENCE &&
+ 		classStruct->relkind != RELKIND_VIEW &&
+-		classStruct->relkind != RELKIND_COMPOSITE_TYPE)
++		classStruct->relkind != RELKIND_COMPOSITE_TYPE &&
++		classStruct->relkind != RELKIND_FOREIGN_TABLE)
+ 		ereport(ERROR,
+ 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+ 				 errmsg("relation \"%s\" is not a table", relname)));

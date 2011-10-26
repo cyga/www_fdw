@@ -7,7 +7,7 @@ psql="$bin/psql"
 
 waits=3
 
-$psql -f "$test_dir/default.sql"
+$psql -f "$test_dir/default-json.sql"
 
 perl -Mojo -e'a("/" => {json => {nrows=>2,rows=>[{title=>"t0",link=>"l0",snippet=>"s0"},{title=>"t1",link=>"l1",snippet=>"s1"}]}})->start' daemon --listen http://*:7777 &
 spid=$!
