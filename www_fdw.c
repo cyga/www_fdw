@@ -56,6 +56,7 @@ static struct WWW_fdw_option valid_options[] =
 	{ "method_update",	ForeignServerRelationId },
 
 	{ "request_serialize_callback",	ForeignServerRelationId },
+	{ "request_serialize_type",	ForeignServerRelationId },
 
 	{ "response_type",	ForeignServerRelationId },
 	{ "response_deserialize_callback",	ForeignServerRelationId },
@@ -78,6 +79,7 @@ typedef struct	WWW_fdw_options
 	char*	method_delete;
 	char*	method_update;
 	char*	request_serialize_callback;
+	char*	request_serialize_type;
 	char*	response_type;
 	char*	response_deserialize_callback;
 	char*	response_iterate_callback;
@@ -92,6 +94,13 @@ typedef struct Reply
 	Oid			  	opts_type;
 	Datum		  	opts_value;
 } Reply;
+
+typedef struct PostParameters
+{
+	bool			post;
+	StringInfoData	data;
+	StringInfoData	content_type;
+} PostParameters;
 
 static bool www_is_valid_option(const char *option, Oid context);
 static void get_options(Oid foreigntableid, WWW_fdw_options *opts);
@@ -117,9 +126,22 @@ static TupleTableSlot *www_iterate(ForeignScanState *node);
 static void www_rescan(ForeignScanState *node);
 static void www_end(ForeignScanState *node);
 
+#define DEBUG
+#ifdef DEBUG
+#define WHERESTR "[file %s, line %d]"
+#define WHEREARG __FILE__, __LINE__
+#define d(...) (elog(DEBUG1, WHERESTR, WHEREARG), elog(DEBUG1, __VA_ARGS__))
+#else
+#define d(...)
+#endif
+
+static void get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value);
+static void get_www_fdw_post_parameters(PostParameters *post, Oid *post_type, Datum *post_value);
+
 static size_t json_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp);
 static size_t xml_write_data_to_parser(void *buffer, size_t size, size_t nmemb, void *userp);
 static size_t write_data_to_buffer(void *buffer, size_t size, size_t nmemb, void *userp);
+static Datum make_text_data(StringInfoData *str);
 
 /* wrappers for corresponding SPI_* calls. check for errors */
 static void SPI_connect_wrapper(void);
@@ -166,11 +188,12 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 	char		*method_delete	= NULL;
 	char		*method_update	= NULL;
 	char		*request_serialize_callback	= NULL;
+	char		*request_serialize_type	= NULL;
 	char		*response_type	= NULL;
 	char		*response_deserialize_callback	= NULL;
 	char		*response_iterate_callback	= NULL;
 
-	elog(DEBUG1, "www_fdw_validator routine");
+	d("www_fdw_validator routine");
 
 	/*
 	 * Check that only options supported by this extension
@@ -198,7 +221,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 			}
 
 			ereport(ERROR,
-				(errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+				(errcode(ERRCODE_FDW_INVALID_ATTRIBUTE_VALUE),
 				errmsg("invalid option \"%s\"", def->defname),
 				errhint("Valid options in this context are: %s", buf.len ? buf.data : "<none>")
 				));
@@ -215,6 +238,8 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 		if(parse_parameter("method_delete", &method_delete, def)) continue;
 		if(parse_parameter("method_update", &method_update, def)) continue;
 		if(parse_parameter("request_serialize_callback", &request_serialize_callback, def)) continue;
+		if(parse_parameter("request_serialize_type", &request_serialize_type, def)) continue;
+
 		if(parse_parameter("response_type", &response_type, def)) {
 			if(
 				0 != strcmp(response_type, "json")
@@ -397,7 +422,7 @@ www_plan(Oid foreigntableid, PlannerInfo *root, RelOptInfo *baserel)
 {
 	FdwPlan	   *fdwplan;
 
-	elog(DEBUG1, "www_plan routine");
+	d("www_plan routine");
 
 	fdwplan = makeNode(FdwPlan);
 	fdwplan->fdw_private = NIL;
@@ -412,7 +437,7 @@ www_plan(Oid foreigntableid, PlannerInfo *root, RelOptInfo *baserel)
 static void
 www_explain(ForeignScanState *node, ExplainState *es)
 {
-	elog(DEBUG1, "www_explain routine");
+	d("www_explain routine");
 
 	ExplainPropertyText("WWW API", "Request", es);
 }
@@ -463,26 +488,71 @@ describe_spi_code(int code)
 
 /*
  * serialize_request_parametersWithCallback
- *  serialize request parameters using specified callback
- *  TODO:
- *		1. how to pass quals? create special type for it?
- *		2. out parameters for: request string and others
+ * serialize request parameters using specified callback
+ * currently following serialize of quals are supported:
+ *  * same as with debug_print_parse
+ *  * null (pass as it as null no matter on quals)
+ *  * empty string otherwise (plus issue warning)
+ * there is not finished branch for tree serialization into json/xml
+ * but it started taking too much time and postponed for next versions (if any)
  */
-static void
-serialize_request_with_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts_value, ForeignScanState *node, StringInfoData *url)
+static
+void
+serialize_request_with_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts_value, ForeignScanState *node, StringInfoData *url, PostParameters *post)
 {
 	int	res;
-	StringInfoData	cmd;
-	Oid	argtypes[1]	= { opts_type };
-	Datum values[1]	= { opts_value };
+	StringInfoData	cmd, qualSer;
+	Oid	argtypes[4];
+	Datum argvalues[4], rpost;
+	char nulls[4];
+	char *rurl = NULL;
+	HeapTupleHeader rpost_tuple_header;
+	bool isnull;
+	MemoryContext	mctxt = CurrentMemoryContext, spimctxt;
+
+	argtypes[0] = opts_type;
+	argvalues[0] = opts_value;
+	nulls[0] = 0;
+
+	if(0 == strcmp("log", opts->request_serialize_type))
+	{
+		initStringInfo(&qualSer);
+		appendStringInfoString( &qualSer, nodeToString(node->ss.ps.plan->qual) );
+		nulls[1] = ' ';
+	}
+	else if(0 == strcmp("null", opts->request_serialize_type))
+	{
+		nulls[1] = 'n';
+	}
+	else
+	{
+		/* set empty string and issue warning */
+		initStringInfo(&qualSer);
+
+		ereport(WARNING, 
+			(
+				errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
+				errmsg("Invalid request_serialize_type: %s", opts->request_serialize_type)
+			)
+		);
+
+		nulls[1] = ' ';
+	}
+	argtypes[1] = TEXTOID;
+	argvalues[1] = 'n' == nulls[1] ? PointerGetDatum(NULL) : make_text_data(&qualSer);
+
+	argtypes[2] = TEXTOID;
+	argvalues[2] = make_text_data(url);
+	nulls[2] = 0;
+
+	get_www_fdw_post_parameters(post, &(argtypes[3]), &(argvalues[3]));
+	nulls[3] = argvalues[3] ? 0 : 1;
 
 	initStringInfo(&cmd);
-	// TODO: add 2nd parameter - qual converted correspondingly
-	appendStringInfo(&cmd, "SELECT %s($1)", opts->request_serialize_callback);
+	appendStringInfo(&cmd, "SELECT * FROM %s($1,$2,$3,$4)", opts->request_serialize_callback);
 
 	SPI_connect_wrapper();
-	res	= SPI_execute_with_args(cmd.data, 1, argtypes, values, NULL, true, 0);
-	SPI_finish_wrapper();
+	res	= SPI_execute_with_args(cmd.data, 4, argtypes, argvalues, nulls, true, 0);
 
 	if(0 > res)
 	{
@@ -493,11 +563,61 @@ serialize_request_with_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts
 			)
 		);
 	}
-	else
+
+	if(0 == SPI_processed)
 	{
-		// TODO: process results
-		//SPI_tuptable->vals->
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("No results were returned from response_iterate_callback '%s': %i", opts->response_iterate_callback, SPI_processed)
+			)
+		);
 	}
+
+	if(1 < SPI_processed)
+	{
+		ereport(ERROR,
+			(
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("More than 1 result was returned from response_iterate_callback '%s': %i", opts->response_iterate_callback, SPI_processed)
+			)
+		);
+	}
+
+	rurl = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+	rpost = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull);
+
+	/* recreate data in correct memory context */
+	spimctxt = MemoryContextSwitchTo(mctxt);
+
+	resetStringInfo(url);
+	appendStringInfoString(url, rurl);
+	
+	if(!isnull)
+	{
+		Datum datum;
+
+		rpost_tuple_header = DatumGetHeapTupleHeader(rpost);
+		datum = GetAttributeByName(rpost_tuple_header, "post", &isnull);
+		if(isnull)
+			post->post = false;
+		else
+			post->post = DatumGetBool(datum);
+
+		resetStringInfo(&post->data);
+		datum = GetAttributeByName(rpost_tuple_header, "data", &isnull);
+		if(!isnull)
+			appendStringInfoString(&post->data, TextDatumGetCString(datum));
+
+		datum = GetAttributeByName(rpost_tuple_header, "content_type", &isnull);
+		resetStringInfo(&post->content_type);
+		if(!isnull)
+			appendStringInfoString(&post->content_type, TextDatumGetCString(datum));
+	}
+
+	MemoryContextSwitchTo(spimctxt);
+
+	SPI_finish_wrapper();
 }
 
 /*
@@ -821,6 +941,17 @@ json_get_result_array_in_tree(JSONNode* root, TupleDesc tuple_desc)
 	return	NULL;
 }
 
+static
+Datum
+make_text_data(StringInfoData *str)
+{
+	text *t	= (text*)palloc(VARHDRSZ + str->len);
+	SET_VARSIZE(t, VARHDRSZ + str->len);
+	memcpy(t->vl_dat, str->data, str->len);
+
+	return PointerGetDatum(t);
+}
+
 /*
  * call_json_response_deserialize_callback
  * call to response_deserialize_callback for "json" response_type
@@ -830,7 +961,6 @@ static
 Reply*
 call_json_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type, Datum opts_value, StringInfoData *buffer)
 {
-	text	*buffer_text;
 	int		res, i,j, natts;
 	StringInfoData	cmd;
 	Oid		opts_argtypes[2]	= { opts_type, TEXTOID };
@@ -850,12 +980,7 @@ call_json_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options 
 
 	SPI_connect_wrapper();
 
-	/* make text variable */
-	buffer_text	= (text*)SPI_palloc(VARHDRSZ + buffer->len);
-	SET_VARSIZE(buffer_text, VARHDRSZ + buffer->len);
-	memcpy(buffer_text->vl_dat, buffer->data, buffer->len);
-
-	opts_values[1]	= PointerGetDatum(buffer_text);
+	opts_values[1]	= make_text_data(buffer);
 
 	/* do callback */
 	initStringInfo(&cmd);
@@ -874,16 +999,14 @@ call_json_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options 
 
 	/* save result to output parameters */
 	/* allocate it in proper memory context */
-	spimctxt = MemoryContextSwitchTo(mctxt);
-	reply		= (Reply*)palloc(sizeof(Reply));
+	reply		= (Reply*)SPI_palloc(sizeof(Reply));
 	reply->ntuples	= SPI_processed;
 	reply->tuple_index	= 0;
 	reply->options		= opts;
 	reply->opts_type	= opts_type;
 	reply->opts_value	= opts_value;
 	/* copy tuples structure: there can be further calls to SPI_exec* */
-	reply->tuples	= (HeapTuple*)palloc(reply->ntuples * sizeof(HeapTuple));
-	MemoryContextSwitchTo(spimctxt);
+	reply->tuples	= (HeapTuple*)SPI_palloc(reply->ntuples * sizeof(HeapTuple));
 
 	/* find correspondence between returned columns and columns we need to return */
 	natts = rel->rd_att->natts;
@@ -979,7 +1102,7 @@ call_xml_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options *
 	memcpy(buffer_text->vl_dat, buffer->data, buffer->len);
 
 #ifdef USE_LIBXML
-	elog(DEBUG1, "compiled with xml support, passing xml data type to callback");
+	d("compiled with xml support, passing xml data type to callback");
 
 	/* parses xml variable
 	 * it parses/checks xml string and returns casted variable
@@ -987,7 +1110,7 @@ call_xml_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options *
 	xml	= xmlparse(buffer_text, XMLOPTION_DOCUMENT, true);
 	opts_values[1]	= XmlPGetDatum(xml);
 #else
-	elog(DEBUG1, "compiled without xml support, passing text data type to callback");
+	d("compiled without xml support, passing text data type to callback");
 
 	opts_values[1]	= PointerGetDatum(buffer_text); 
 #endif
@@ -1009,16 +1132,14 @@ call_xml_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options *
 
 	/* save result to output parameters */
 	/* allocate it in proper memory context */
-	spimctxt = MemoryContextSwitchTo(mctxt);
-	reply		= (Reply*)palloc(sizeof(Reply));
+	reply		= (Reply*)SPI_palloc(sizeof(Reply));
 	reply->ntuples	= SPI_processed;
 	reply->tuple_index	= 0;
 	reply->options		= opts;
 	reply->opts_type	= opts_type;
 	reply->opts_value	= opts_value;
 	/* copy tuples structure: there can be further calls to SPI_exec* */
-	reply->tuples	= (HeapTuple*)palloc(reply->ntuples * sizeof(HeapTuple));
-	MemoryContextSwitchTo(spimctxt);
+	reply->tuples	= (HeapTuple*)SPI_palloc(reply->ntuples * sizeof(HeapTuple));
 
 	/* find correspondence between returned columns and columns we need to return */
 	natts = rel->rd_att->natts;
@@ -1098,6 +1219,7 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 		opts->method_update,
 
 		opts->request_serialize_callback,
+		opts->request_serialize_type,
 
 		opts->response_type,
 		opts->response_deserialize_callback,
@@ -1142,6 +1264,69 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 				(
 					errcode(ERRCODE_SYNTAX_ERROR),
 					errmsg("Can't identify WWW_fdw_options OID: not exactly 1 result was returned (%d)", SPI_processed)
+					)
+			);
+	}
+
+	SPI_finish_wrapper();
+}
+
+/*
+ * get_www_fdw_post_parameters
+ * get Oid for WWWFdwPostParameters type, set up Datum value for it properly
+ * will be used to pass it to callbacks
+ */
+static
+void
+get_www_fdw_post_parameters(PostParameters *post, Oid *post_type, Datum *post_value)
+{
+	Datum	data[1];
+	bool	isnull[1]	= {false};
+	int		res;
+	char*	postparams[]	= {
+		post->post ? "t" : "f",
+		post->data.data,
+		post->content_type.data
+	};
+	TupleDesc		tuple_desc;
+	AttInMetadata*	aim;
+	MemoryContext	mctxt = CurrentMemoryContext, spimctxt;
+
+	SPI_connect_wrapper();
+	res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwpostparameters'", true, 0);
+	if(0 > res)
+	{
+		ereport(ERROR,
+				(
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("Can't identify WWWFdwPostParameters OID: %i (%s)", res, describe_spi_code(res))
+					)
+			);
+	}
+
+	if(1 == SPI_processed)
+	{
+		heap_deform_tuple(*(SPI_tuptable->vals), SPI_tuptable->tupdesc, data, isnull);
+		/* Oid is typedef for unsigned int, value will be copied */
+		*post_type	= (Oid)(data[0]);
+
+		tuple_desc	= TypeGetTupleDesc(*post_type, NIL);
+		aim			= TupleDescGetAttInMetadata(tuple_desc);
+
+		/* switch to memory context before spi for saving value */
+		spimctxt = MemoryContextSwitchTo(mctxt);
+		*post_value	= HeapTupleGetDatum( BuildTupleFromCStrings(aim, postparams) );
+		MemoryContextSwitchTo(spimctxt);
+
+		SPI_finish_wrapper();
+		return;
+	}
+	else
+	{
+		ereport(ERROR,
+				(
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("Can't identify WWWFdwPostParameters OID: not exactly 1 result was returned (%d)", SPI_processed)
 					)
 			);
 	}
@@ -1219,7 +1404,7 @@ prepare_xml_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type,
 				 errmsg("Can't find result in parsed server's xml response")
 					));
 
-	elog(DEBUG1, "Result array was found in xml response");
+	d("Result array was found in xml response");
 
 	/* save result */
 	reply = (Reply*)palloc(sizeof(Reply));
@@ -1291,7 +1476,7 @@ prepare_json_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type
 				 errmsg("Can't find result in parsed server's json response")
 					));
 
-	elog(DEBUG1, "Result array was found in json response");
+	d("Result array was found in json response");
 
 	/* prepare result */
 	reply = (Reply*)palloc(sizeof(Reply));
@@ -1345,8 +1530,10 @@ www_begin(ForeignScanState *node, int eflags)
 	StringInfoData	buffer;
 	Oid				opts_type	= 0;
 	Datum			opts_value	= 0;
+	PostParameters	post;
+	struct curl_slist	*curl_opts = NULL;
 
-	elog(DEBUG1, "www_begin routine");
+	d("www_begin routine");
 
 	/*
 	 * Do nothing in EXPLAIN
@@ -1354,11 +1541,12 @@ www_begin(ForeignScanState *node, int eflags)
 	if (eflags & EXEC_FLAG_EXPLAIN_ONLY)
 		return;
 
-	elog(DEBUG1, "www_begin routine, not explain only call");
+	d("www_begin routine, not explain only call");
 
 	opts	= (WWW_fdw_options*)palloc(sizeof(WWW_fdw_options));
 	get_options( RelationGetRelid(node->ss.ss_currentRelation), opts );
 
+	/* TODO prepare url using specified method in the config */
 	initStringInfo(&url);
 	appendStringInfo(&url, "%s%s", opts->uri, opts->uri_select);
 
@@ -1374,24 +1562,36 @@ www_begin(ForeignScanState *node, int eflags)
 		get_www_fdw_options(opts, &opts_type, &opts_value);
 	}
 
+	post.post = false;
 	if(opts->request_serialize_callback)
 	{
 		/* call specified callback for forming request */
-		/* TODO */
-		/* serialize_request_with_callback(opts, node, &url, &struct4otherParams); */
-		serialize_request_with_callback(opts, opts_type, opts_value, node, &url);
+		initStringInfo(&post.data);
+		initStringInfo(&post.content_type);
+		serialize_request_with_callback(opts, opts_type, opts_value, node, &url, &post);
 	}
 	else
 	{
 		serialize_request_parameters(node, &url);
 	}
 
-	elog(DEBUG1, "Url for request: '%s'", url.data);
+	d("Url for request: '%s'", url.data);
 
 	/* interacting with the server */
 	curl = curl_easy_init();
 	curl_easy_setopt(curl, CURLOPT_URL, url.data);
 	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error_buffer);
+	if(post.post)
+	{
+		curl_easy_setopt(curl, CURLOPT_POST, 1);
+		if(0 < post.content_type.len)
+		{
+			curl_slist_append(curl_opts, "Content-type:");
+			curl_slist_append(curl_opts, post.content_type.data);
+			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_opts);
+		}
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post.data.data);
+	}
 
 	/* prepare parsers */
 	if( 0 == strcmp(opts->response_type, "json") )
@@ -1436,6 +1636,8 @@ www_begin(ForeignScanState *node, int eflags)
 			errmsg("Can't get a response from server: %s", curl_error_buffer)
 			));
 	}
+	if(curl_opts)
+		curl_slist_free_all(curl_opts);
 
 	/* process parsed results */
 	if( 0 == strcmp(opts->response_type, "json") )
@@ -1454,7 +1656,7 @@ www_begin(ForeignScanState *node, int eflags)
 						 errmsg("Can't parse server's json response, parser error code: %i", ret)
 							));
 
-			elog(DEBUG1, "JSON response was parsed");
+			d("JSON response was parsed");
 
 			node->fdw_state = (void*)prepare_json_result(node, opts, opts_type, opts_value, root);
 
@@ -1492,7 +1694,7 @@ www_begin(ForeignScanState *node, int eflags)
 					errmsg("Response xml isn't well formed")
 					));
 
-			elog(DEBUG1, "Xml response was parsed");
+			d("Xml response was parsed");
 
 			node->fdw_state = (void*)prepare_xml_result(node, opts, opts_type, opts_value, doc);
 
@@ -1578,7 +1780,7 @@ www_iterate(ForeignScanState *node)
 	HeapTuple		tuple;
 	MemoryContext	oldcontext;
 
-	elog(DEBUG1, "www_iterate routine");
+	d("www_iterate routine");
 
 	/* no results or results finished */
 	if(!reply || !reply->tuples || reply->tuple_index >= reply->ntuples)
@@ -1591,7 +1793,7 @@ www_iterate(ForeignScanState *node)
 	oldcontext = MemoryContextSwitchTo(node->ss.ps.ps_ExprContext->ecxt_per_query_memory);
 	if(reply->options->response_iterate_callback)
 	{
-		elog(DEBUG1, "call response_iterate_callback");
+		d("call response_iterate_callback");
 
 		tuple = call_response_iterate_callback(
 			node,
@@ -1617,7 +1819,7 @@ www_rescan(ForeignScanState *node)
 {
 	Reply	   *reply = (Reply *) node->fdw_state;
 
-	elog(DEBUG1, "www_rescan routine");
+	d("www_rescan routine");
 
 	reply->tuple_index	= 0;
 }
@@ -1629,7 +1831,7 @@ www_rescan(ForeignScanState *node)
 static void
 www_end(ForeignScanState *node)
 {
-	elog(DEBUG1, "www_end routine");
+	d("www_end routine");
 }
 
 /*
@@ -1753,6 +1955,7 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	opts->method_delete	= NULL;
 	opts->method_update	= NULL;
 	opts->request_serialize_callback	= NULL;
+	opts->request_serialize_type	= NULL;
 	opts->response_type	= NULL;
 	opts->response_deserialize_callback	= NULL;
 	opts->response_iterate_callback		= NULL;
@@ -1792,6 +1995,9 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 		if (strcmp(def->defname, "request_serialize_callback") == 0)
 			opts->request_serialize_callback	= defGetString(def);
 
+		if (strcmp(def->defname, "request_serialize_type") == 0)
+			opts->request_serialize_type	= defGetString(def);
+
 		if (strcmp(def->defname, "response_type") == 0)
 			opts->response_type	= defGetString(def);
 
@@ -1812,6 +2018,8 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	if (!opts->method_insert) opts->method_insert	= "PUT";
 	if (!opts->method_delete) opts->method_delete	= "DELETE";
 	if (!opts->method_update) opts->method_update	= "POST";
+
+	if (!opts->request_serialize_type) opts->request_serialize_type	= "log";
 
 	if (!opts->response_type) opts->response_type	= "json";
 

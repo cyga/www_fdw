@@ -1,6 +1,6 @@
 /* contrib/www_fdw/www_fdw--1.0.sql */
 
--- type needed for callback
+-- type needed for callbacks
 CREATE TYPE WWWFdwOptions AS (
 	uri									text,
 	uri_select							text,
@@ -13,9 +13,16 @@ CREATE TYPE WWWFdwOptions AS (
 	method_delete						text,
 	method_update						text,
 	request_serialize_callback			text,
+	request_serialize_type			text,
 	response_type						text,
 	response_deserialize_callback		text,
 	response_iterate_callback			text
+);
+-- type needed for returning post options in serialize_request_callback
+CREATE TYPE WWWFdwPostParameters AS (
+	post		boolean,
+	data		text,
+	content_type	text
 );
 
 -- create wrapper with validator and handler
