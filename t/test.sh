@@ -9,7 +9,7 @@ function test
 	else
 		let failed=$failed+1
 		echo "Failed   $3"
-		echo -e "  Result: '$1'"
+		echo -e "  Result:   '$1'"
 		echo -e "  Expected: '$2'"
 	fi
 }
