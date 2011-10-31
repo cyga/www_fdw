@@ -1190,6 +1190,8 @@ call_xml_response_deserialize_callback(ForeignScanState *node, WWW_fdw_options *
 
 	pfree(columns);
 
+	SPI_finish_wrapper();
+
 	return	reply;
 }
 

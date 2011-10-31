@@ -7,6 +7,8 @@ psql="$bin/psql"
 
 waits=3
 
+trap 'if [ -n "$spid" ]; then echo "killing server $spid"; kill $spid; fi; exit' 2 13 15
+
 ############ request_serialize_type=default (log)
 
 $psql -f "$test_dir/request-serialize-callback.sql"

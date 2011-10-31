@@ -24,9 +24,10 @@ BEGIN
 	LOOP
 		row := json_get(response::json, '$["rows"]['||i||']');
 		EXIT WHEN row IS NULL;
-		title := json_get(row, '["title"]');
-		link := json_get(row, '["link"]');
-		snippet := json_get(row, '["snippet"]');
+		-- parser doesn't take care of quotes in "string"
+		title := trim(both '"' from json_get(row, '["title"]')::text);
+		link := trim(both '"' from json_get(row, '["link"]')::text);
+		snippet := trim(both '"' from json_get(row, '["snippet"]')::text);
 		r := ROW(title, link, snippet);
 		RETURN NEXT r;
 		i := i + 1;

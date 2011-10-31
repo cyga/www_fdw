@@ -7,6 +7,8 @@ psql="$bin/psql"
 
 waits=3
 
+trap 'if [ -n "$spid" ]; then echo "killing server $spid"; kill $spid; fi; exit' 2 13 15
+
 $psql -f "$test_dir/response-iterate-callback.sql"
 
 perl -Mojo -e'a("/" => {json => {nrows=>2,rows=>[{title=>"t0",link=>"l0",snippet=>"s0"},{title=>"t1",link=>"l1",snippet=>"s1"}]}})->start' daemon --listen http://*:7777 &

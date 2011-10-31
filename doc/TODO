@@ -1,10 +1,4 @@
-* tests for deserialize callbacks
-   ** json
-   ** xml
-   ** other? wasn't implemented, do we have it?
-1/2 day
-
-* tests for iterate callback?
+* tests for iterate callback
 1/4 day
 
 * uri_callback
