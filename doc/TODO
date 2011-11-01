@@ -1,17 +1,8 @@
-* tests for iterate callback
-1/4 day
-
-* uri_callback
-1 day
-
-* reponse_type eq "other"
-2 days
-
 * more tests and fixes
 2 days
 
 * preparing PGXS package
 1 day
 
-* case insensitive select for oid?
-1 hour
+* case insensitive select for oid (WWWFdwOptions & WWFdwPostParameters)?
+2 hours
