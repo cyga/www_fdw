@@ -1,32 +1,35 @@
-# contrib/www_fdw/Makefile
+# parse extension name from META.json:
+EXTENSION	= $(shell grep '"name"\s*:' META.json | \
+               sed -e 's/[[:space:]]*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)"[[:space:]]*,[[:space:]]*/\1/')
+# parse extension version from control file:
+EXTVERSION	= $(shell grep default_version $(EXTENSION).control | \
+               sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
 
-LIBJSON = libjson-0.8
-MODULE_big = www_fdw
-OBJS	= www_fdw.o $(LIBJSON)/json.o
-EXTENSION = www_fdw
-DATA = www_fdw--1.0.0.sql
+DATA		= $(filter-out $(wildcard sql/*--*.sql),$(wildcard sql/*.sql))
+TESTS		= $(wildcard test/regress/*.sql)
+REGRESS		= $(patsubst test/regress/%.sql,%,$(TESTS))
+REGRESS_OPTS= --inputdir=test
+DOCS		= $(wildcard doc/*.md)
+PG_CONFIG	= pg_config
+LIBJSON		= libjson-0.8
+# use module big instead:
+#MODULES		= $(patsubst %.c,%,$(wildcard src/*.c))
+MODULE_big	= $(EXTENSION)
+OBJS		= src/$(EXTENSION).o $(LIBJSON)/json.o
+PG_CPPFLAGS	+= -I/usr/include/libxml2
+SHLIB_LINK	+= -lcurl -lxml2
 
-REGRESS = www_fdw
-PG_CPPFLAGS += -I/usr/include/libxml2
-SHLIB_LINK += -lcurl -lxml2
+PG91         = $(shell $(PG_CONFIG) --version | grep -qE " 8\.| 9\.0" && echo no || echo yes)
 
-all:all-libjson
+ifeq ($(PG91),yes)
+all: sql/$(EXTENSION)--$(EXTVERSION).sql
 
-all-libjson:
-	$(MAKE) -C $(LIBJSON) all
+sql/$(EXTENSION)--$(EXTVERSION).sql: sql/$(EXTENSION).sql
+	cp $< $@
 
-clean: clean-libjson
+DATA = $(wildcard sql/*--*.sql) sql/$(EXTENSION)--$(EXTVERSION).sql
+EXTRA_CLEAN = sql/$(EXTENSION)--$(EXTVERSION).sql
+endif
 
-clean-libjson:
-	$(MAKE) -C $(LIBJSON) clean
-
-ifdef USE_PGXS
-PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
-else
-subdir = contrib/www_fdw
-top_builddir = ../..
-include $(top_builddir)/src/Makefile.global
-include $(top_srcdir)/contrib/contrib-global.mk
-endif

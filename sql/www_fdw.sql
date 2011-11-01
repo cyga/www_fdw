@@ -1,13 +1,40 @@
--- TODO
-CREATE EXTENSION www_fdw;
+/* contrib/www_fdw/www_fdw--1.0.sql */
 
-SELECT count(*) FROM twitter;
+-- type needed for callbacks
+CREATE TYPE WWWFdwOptions AS (
+	uri									text,
+	uri_select							text,
+	uri_insert							text,
+	uri_delete							text,
+	uri_update							text,
+	uri_callback						text,
+	method_select						text,
+	method_insert						text,
+	method_delete						text,
+	method_update						text,
+	request_serialize_callback			text,
+	request_serialize_type			text,
+	response_type						text,
+	response_deserialize_callback		text,
+	response_iterate_callback			text
+);
+-- type needed for returning post options in serialize_request_callback
+CREATE TYPE WWWFdwPostParameters AS (
+	post		boolean,
+	data		text,
+	content_type	text
+);
 
-SELECT count(*) FROM twitter WHERE q = '#postgresql';
+-- create wrapper with validator and handler
+CREATE OR REPLACE FUNCTION www_fdw_validator (text[], oid)
+RETURNS bool
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
 
-CREATE TEMP TABLE twtest (id int, from_user text);
-INSERT INTO twtest(from_user)
-	SELECT from_user FROM twitter WHERE q = '#postgres' LIMIT 1;
-SELECT true FROM twtest INNER JOIN
-	twitter USING(from_user) WHERE q = '#postgres';
+CREATE OR REPLACE FUNCTION www_fdw_handler ()
+RETURNS fdw_handler
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
 
+CREATE FOREIGN DATA WRAPPER www_fdw
+VALIDATOR www_fdw_validator HANDLER www_fdw_handler;

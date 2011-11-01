@@ -1,4 +1,5 @@
 * more tests and fixes
+  ** repeat same requests (had memory leak for it)
 2 days
 
 * preparing PGXS package

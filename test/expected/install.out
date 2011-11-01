@@ -1,0 +1,19 @@
+/* checking types: */
+SELECT t.typname FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwoptions';
+ typname 
+---------
+(0 rows)
+
+SELECT t.typname FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwpostparameters';
+ typname 
+---------
+(0 rows)
+
+/* check exension: */
+CREATE EXTENSION www_fdw;
+CREATE SERVER www_fdw_server FOREIGN DATA WRAPPER www_fdw;
+CREATE USER MAPPING FOR current_user SERVER www_fdw_server;
+DROP EXTENSION www_fdw CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to server www_fdw_server
+drop cascades to user mapping for postgres

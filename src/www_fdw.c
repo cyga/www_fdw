@@ -22,7 +22,7 @@
 #include "utils/xml.h"
 
 #include "curl/curl.h"
-#include "libjson-0.8/json.h"
+#include "../libjson-0.8/json.h"
 #include "json_parser.h"
 
 #include <libxml/parser.h>

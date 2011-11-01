@@ -9,7 +9,7 @@ waits=3
 
 trap 'if [ -n "$spid" ]; then echo "killing server $spid"; kill $spid; fi; exit' 2 13 15
 
-$psql -f "$test_dir/default-xml.sql"
+$psql -f "$test_dir/sql/default-xml.sql"
 
 perl -Mojo -e'a("/" => {text => "<doc><nrows>3</nrows><rows><row><title>3</title></row></rows></doc>"})->start' daemon --listen http://*:7777 &
 spid=$!

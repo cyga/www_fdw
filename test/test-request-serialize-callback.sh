@@ -11,7 +11,7 @@ trap 'if [ -n "$spid" ]; then echo "killing server $spid"; kill $spid; fi; exit'
 
 ############ request_serialize_type=default (log)
 
-$psql -f "$test_dir/request-serialize-callback.sql"
+$psql -f "$test_dir/sql/request-serialize-callback.sql"
 
 perl -Mojo -e'a("/"=>sub{$c=shift;$t=$c->param("title");$c->render_json({nrows=>2,rows=>[{title=>$t,link=>"l0",snippet=>"s0"},{title=>$t,link=>"l1",snippet=>"s1"}]})})->start' daemon --listen http://*:7777 &
 spid=$!
@@ -39,7 +39,7 @@ test "$r" $'titel|l0|s0' "$sql"
 
 ############ request_serialize_type=null
 
-$psql -f "$test_dir/request-serialize-callback-type-null.sql"
+$psql -f "$test_dir/sql/request-serialize-callback-type-null.sql"
 
 sql="select * from www_fdw_test"
 r=`$psql -tA -c"$sql"`
@@ -64,7 +64,7 @@ test "$r" $'titel2|l0|s0' "$sql"
 ############ request_serialize_type=default
 ############ post
 
-$psql -f "$test_dir/request-serialize-callback-post.sql"
+$psql -f "$test_dir/sql/request-serialize-callback-post.sql"
 
 sql="select * from www_fdw_test"
 r=`$psql -tA -c"$sql"`

@@ -1,5 +1,5 @@
 # www_fdw extension
 comment = 'WWW FDW - extension for handling different web services'
-default_version = '1.0.0'
+default_version = '0.1.0'
 module_pathname = '$libdir/www_fdw'
 relocatable = true
