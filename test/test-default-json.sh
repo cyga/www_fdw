@@ -9,7 +9,7 @@ waits=3
 
 trap 'if [ -n "$spid" ]; then echo "killing server $spid"; kill $spid; fi; exit' 2 13 15
 
-$psql -f "$test_dir/sql/default-json.sql"
+$psql -f "$test_dir/default-json.sql"
 
 perl -Mojo -e'a("/" => {json => {nrows=>2,rows=>[{title=>"t0",link=>"l0",snippet=>"s0"},{title=>"t1",link=>"l1",snippet=>"s1"}]}})->start' daemon --listen http://*:7777 &
 spid=$!
@@ -19,10 +19,20 @@ sql="select * from www_fdw_test"
 r=`$psql -tA -c"$sql"`
 test "$r" $'t0|l0|s0\nt1|l1|s1' "$sql"
 
+# check same query (on purpose):
+sql="select * from www_fdw_test"
+r=`$psql -tA -c"$sql"`
+test "$r" $'t0|l0|s0\nt1|l1|s1' "$sql"
+
 sql="select * from www_fdw_test limit 1"
 r=`$psql -tA -c"$sql"`
 test "$r" $'t0|l0|s0' "$sql"
 
+sql="select * from www_fdw_test order by title"
+r=`$psql -tA -c"$sql"`
+test "$r" $'t0|l0|s0\nt1|l1|s1' "$sql"
+
+# check same query (on purpose):
 sql="select * from www_fdw_test order by title"
 r=`$psql -tA -c"$sql"`
 test "$r" $'t0|l0|s0\nt1|l1|s1' "$sql"
