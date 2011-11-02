@@ -1,5 +1,5 @@
 #!/bin/bash
-test_dir=`echo $0 | perl -pe's#(.*/).*#$1#;'`
+test_dir=`echo $0 | perl -pe's#(.*)/.*#$1#;'`
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -18,24 +18,30 @@ if [ -n "$all" ]; then
 	json=1
 fi
 
-for t in \
-	test-default-json.sh \
-	test-default-xml.sh \
-	test-request-serialize-callback.sh \
-	test-json-response-deserialize-callback.sh \
-	test-xml-response-deserialize-callback.sh \
-	test-other-response-deserialize-callback.sh \
-	test-response-iterate-callback.sh
-do
-	if [[ "test-json-response-deserialize-callback.sh" == "$t" && -z "$json" ]]; then
+trap 'let fall=$fsuccess+$ffailed;echo;echo "Tests files run: $fall";echo "Ok: $fsuccess";echo "Failed: $ffailed"; if [ 0 -lt "$ffailed" ]; then exit 1; fi' EXIT
+
+for t in $test_dir/test-*.sh; do
+	if [[ "$0" == "$t" ]]; then
+		echo "skipping itself: '$t'"
+		continue;
+	fi
+
+	if [[ "$test_dir/test-json-response-deserialize-callback.sh" == "$t" && -z "$json" ]]; then
 		echo "need json module for this callback (--json or -a|--all option)";
 		continue;
 	fi
 
-	if [[ "test-xml-response-deserialize-callback.sh" == "$t" && -z "$xml" ]]; then
+	if [[ "$test_dir/test-xml-response-deserialize-callback.sh" == "$t" && -z "$xml" ]]; then
 		echo "need xml support in postgres for this callback (--xml or -a|--all option)";
 		continue;
 	fi
 
-	$test_dir/$t
+	echo "############## test: '$t' ##############"
+	"$t"
+	if [ 0 == "$?" ]; then
+		let fsuccess=$fsuccess+1
+	else
+		let ffailed=$ffailed+1
+	fi
+	echo ''
 done

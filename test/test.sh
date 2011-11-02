@@ -13,4 +13,4 @@ function test
 		echo -e "  Expected: '$2'"
 	fi
 }
-trap 'let all=$success+$failed;echo;echo "Tests run: $all";echo "Ok: $success";echo "Failed: $failed"' EXIT
+trap 'let all=$success+$failed;echo;echo "Tests run: $all";echo "Ok: $success";echo "Failed: $failed"; if [ 0 -lt "$failed" ]; then exit 1; fi' EXIT

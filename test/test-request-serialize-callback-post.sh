@@ -1,5 +1,5 @@
 #!/bin/bash
-test_dir=`echo $0 | perl -pe's#(.*/).*#$1#;'`
+test_dir=`echo $0 | perl -pe's#(.*)/.*#$1#;'`
 source "$test_dir/test.sh"
 
 bin=`pg_config --bindir`
@@ -9,72 +9,11 @@ waits=3
 
 trap 'if [ -n "$spid" ]; then echo "killing server $spid"; kill $spid; fi; exit' 2 13 15
 
-############ request_serialize_type=default (log)
-
-$psql -f "$test_dir/request-serialize-callback.sql"
+$psql -f "$test_dir/request-serialize-callback-post.sql"
 
 perl -Mojo -e'a("/"=>sub{$c=shift;$t=$c->param("title");$c->render_json({nrows=>2,rows=>[{title=>$t,link=>"l0",snippet=>"s0"},{title=>$t,link=>"l1",snippet=>"s1"}]})})->start' daemon --listen http://*:7777 &
 spid=$!
 sleep $waits
-
-sql="select * from www_fdw_test"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0\ntitel|l1|s1' "$sql"
-
-# same query (on purpose):
-sql="select * from www_fdw_test"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0\ntitel|l1|s1' "$sql"
-
-sql="select * from www_fdw_test limit 1"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0' "$sql"
-
-# same query (on purpose):
-sql="select * from www_fdw_test limit 1"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0' "$sql"
-
-sql="select * from www_fdw_test order by link"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0\ntitel|l1|s1' "$sql"
-
-sql="select * from www_fdw_test order by link desc"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l1|s1\ntitel|l0|s0' "$sql"
-
-sql="select * from www_fdw_test order by link limit 1"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0' "$sql"
-
-############ request_serialize_type=null
-
-$psql -f "$test_dir//request-serialize-callback-type-null.sql"
-
-sql="select * from www_fdw_test"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel2|l0|s0\ntitel2|l1|s1' "$sql"
-
-sql="select * from www_fdw_test limit 1"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel2|l0|s0' "$sql"
-
-sql="select * from www_fdw_test order by link"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel2|l0|s0\ntitel2|l1|s1' "$sql"
-
-sql="select * from www_fdw_test order by link desc"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel2|l1|s1\ntitel2|l0|s0' "$sql"
-
-sql="select * from www_fdw_test order by link limit 1"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel2|l0|s0' "$sql"
-
-############ request_serialize_type=default
-############ post
-
-$psql -f "$test_dir//request-serialize-callback-post.sql"
 
 sql="select * from www_fdw_test"
 r=`$psql -tA -c"$sql"`
@@ -147,4 +86,3 @@ r=`$psql -tA -c"$sql"`
 test "$r" $'post_title2|post_link2|post_snippet2' "$sql"
 
 kill $spid
-

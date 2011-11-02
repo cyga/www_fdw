@@ -1,5 +1,5 @@
 #!/bin/bash
-test_dir=`echo $0 | perl -pe's#(.*/).*#$1#;'`
+test_dir=`echo $0 | perl -pe's#(.*)/.*#$1#;'`
 source "$test_dir/test.sh"
 
 bin=`pg_config --bindir`
