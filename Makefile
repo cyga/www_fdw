@@ -15,7 +15,7 @@ LIBJSON		= libjson-0.8
 # use module big instead:
 #MODULES		= $(patsubst %.c,%,$(wildcard src/*.c))
 MODULE_big	= $(EXTENSION)
-OBJS		= src/$(EXTENSION).o src/json_parser.o $(LIBJSON)/json.o
+OBJS		= $(patsubst %.c,%.o,$(wildcard src/*.c)) $(LIBJSON)/json.o
 PG_CPPFLAGS	+= -I/usr/include/libxml2
 SHLIB_LINK	+= -lcurl -lxml2
 
