@@ -24,6 +24,8 @@
 #include "curl/curl.h"
 #include "libjson-0.8/json.h"
 #include "json_parser.h"
+#include "serialize_quals.h"
+#include "utils.h"
 
 #include <libxml/parser.h>
 #include <libxml/tree.h>
@@ -57,6 +59,7 @@ static struct WWW_fdw_option valid_options[] =
 
 	{ "request_serialize_callback",	ForeignServerRelationId },
 	{ "request_serialize_type",	ForeignServerRelationId },
+	{ "request_serialize_human_readable",	ForeignServerRelationId },
 
 	{ "response_type",	ForeignServerRelationId },
 	{ "response_deserialize_callback",	ForeignServerRelationId },
@@ -80,6 +83,7 @@ typedef struct	WWW_fdw_options
 	char*	method_update;
 	char*	request_serialize_callback;
 	char*	request_serialize_type;
+	char*	request_serialize_human_readable;
 	char*	response_type;
 	char*	response_deserialize_callback;
 	char*	response_iterate_callback;
@@ -125,15 +129,6 @@ static void www_begin(ForeignScanState *node, int eflags);
 static TupleTableSlot *www_iterate(ForeignScanState *node);
 static void www_rescan(ForeignScanState *node);
 static void www_end(ForeignScanState *node);
-
-#define DEBUG
-#ifdef DEBUG
-#define WHERESTR "[file %s, line %d]"
-#define WHEREARG __FILE__, __LINE__
-#define d(...) (elog(DEBUG1, WHERESTR, WHEREARG), elog(DEBUG1, __VA_ARGS__))
-#else
-#define d(...)
-#endif
 
 static void get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value);
 static void get_www_fdw_post_parameters(PostParameters *post, Oid *post_type, Datum *post_value);
@@ -189,6 +184,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 	char		*method_update	= NULL;
 	char		*request_serialize_callback	= NULL;
 	char		*request_serialize_type	= NULL;
+	char		*request_serialize_human_readable	= NULL;
 	char		*response_type	= NULL;
 	char		*response_deserialize_callback	= NULL;
 	char		*response_iterate_callback	= NULL;
@@ -239,6 +235,20 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 		if(parse_parameter("method_update", &method_update, def)) continue;
 		if(parse_parameter("request_serialize_callback", &request_serialize_callback, def)) continue;
 		if(parse_parameter("request_serialize_type", &request_serialize_type, def)) continue;
+		if(parse_parameter("request_serialize_human_readable", &request_serialize_human_readable, def))
+		{
+			if(
+				0 != strcmp(response_type, "0")
+				&&
+				0 != strcmp(response_type, "1")
+			)
+			{
+				ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("invalid value for request_serialize_human_readable: %s (0 or 1 are available only)", response_type)
+					));
+			}
+			continue;
+		}
 
 		if(parse_parameter("response_type", &response_type, def)) {
 			if(
@@ -250,7 +260,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 			)
 			{
 				ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("invalid value for response_type: %s", response_type)
+					errmsg("invalid value for response_type: %s (json, xml, other are available only)", response_type)
 					));
 			}
 			continue;
@@ -523,6 +533,26 @@ serialize_request_with_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts
 	else if(0 == strcmp("null", opts->request_serialize_type))
 	{
 		nulls[1] = 'n';
+	}
+	else if(0 == strcmp("json", opts->request_serialize_type))
+	{
+		initStringInfo(&qualSer);
+		appendStringInfoString( &qualSer, serialize_quals(
+									(0 == strcmp("0",opts->request_serialize_human_readable) ? 0 : 1),
+									node->ss.ps.plan->qual,
+									serialize_node_with_children_callback_json,
+									serialize_node_without_children_callback_json) );
+		nulls[1] = ' ';
+	}
+	else if(0 == strcmp("xml", opts->request_serialize_type))
+	{
+		initStringInfo(&qualSer);
+		appendStringInfoString( &qualSer, serialize_quals(
+									(0 == strcmp("0",opts->request_serialize_human_readable) ? 0 : 1),
+									node->ss.ps.plan->qual,
+									serialize_node_with_children_callback_xml,
+									serialize_node_without_children_callback_xml) );
+		nulls[1] = ' ';
 	}
 	else
 	{
@@ -1110,6 +1140,7 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 
 		opts->request_serialize_callback,
 		opts->request_serialize_type,
+		opts->request_serialize_human_readable,
 
 		opts->response_type,
 		opts->response_deserialize_callback,
@@ -1856,6 +1887,7 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	opts->method_update	= NULL;
 	opts->request_serialize_callback	= NULL;
 	opts->request_serialize_type	= NULL;
+	opts->request_serialize_human_readable	= NULL;
 	opts->response_type	= NULL;
 	opts->response_deserialize_callback	= NULL;
 	opts->response_iterate_callback		= NULL;
@@ -1898,6 +1930,9 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 		if (strcmp(def->defname, "request_serialize_type") == 0)
 			opts->request_serialize_type	= defGetString(def);
 
+		if (strcmp(def->defname, "request_serialize_human_readable") == 0)
+			opts->request_serialize_human_readable	= defGetString(def);
+
 		if (strcmp(def->defname, "response_type") == 0)
 			opts->response_type	= defGetString(def);
 
@@ -1920,6 +1955,7 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	if (!opts->method_update) opts->method_update	= "POST";
 
 	if (!opts->request_serialize_type) opts->request_serialize_type	= "log";
+	if (!opts->request_serialize_human_readable) opts->request_serialize_human_readable	= "0";
 
 	if (!opts->response_type) opts->response_type	= "json";
 

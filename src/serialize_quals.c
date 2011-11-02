@@ -1,38 +1,155 @@
 #include "serialize_quals.h"
+#include "utils.h"
+#include <string.h>
+
+char* INDENT_STRING	= "\t";
+size_t INDENT_STRING_LENGTH = 1;
+
+void
+set_indent_string(char *str)
+{
+	INDENT_STRING	= str;
+	INDENT_STRING_LENGTH = strlen(INDENT_STRING);
+}
+
+const char MAX_INDENT = 128;
 
 static
 char*
-serialize_node_with_children_callback_json(char *name, List *params)
+get_indent(int indent)
+{
+	static char **indents = NULL;
+
+	if(-1 == indent)
+		return "";
+
+	if(indent > MAX_INDENT)
+	{
+		char *big = (char*)palloc((indent*INDENT_STRING_LENGTH+1)*sizeof(char));
+		char i;
+
+		for(i=0; i<indent; i++)
+			strncpy(big+i*INDENT_STRING_LENGTH,
+					INDENT_STRING, INDENT_STRING_LENGTH);
+		*(big+i*INDENT_STRING_LENGTH) = '\0';
+
+		return big;
+	}
+
+	if(NULL == indents)
+		indents = (char**)palloc(MAX_INDENT*sizeof(char*));
+
+	if(NULL == indents[indent])
+	{
+		char i;
+
+		indents[indent] = (char*)palloc((indent*INDENT_STRING_LENGTH+1)*sizeof(char));
+
+		for(i=0; i<indent; i++)
+			strncpy(indents[indent]+i*INDENT_STRING_LENGTH,
+					INDENT_STRING, INDENT_STRING_LENGTH);
+		*(indents[indent]+i*INDENT_STRING_LENGTH) = '\0';
+	}
+
+	return indents[indent];
+}
+
+static
+char*
+get_space(int indent)
+{
+	return -1 == indent ? "" : " ";
+}
+
+static
+char*
+get_newline(int indent)
+{
+	return -1 == indent ? "" : "\n";
+}
+
+static
+char
+next_indent(int indent)
+{
+	return -1 == indent ? indent : indent+1;
+}
+
+/*
+ * read description in header file (to keep in single place)
+ */
+void
+serialize_node_with_children_callback_json(int *indent, char *name, List *params, StringInfo prefix, StringInfo suffix)
+{
+	char indent1 = next_indent(*indent);
+	ListCell *lc;
+	NodeParameter	*p;
+
+	appendStringInfo(prefix, "%s{%s%s\"name\":%s\"%s\",%s",
+					 get_indent(*indent),
+					 get_newline(*indent),
+					 get_indent(indent1),
+					 get_space(*indent),
+					 name,
+					 get_newline(*indent));
+
+	foreach (lc, params)
+	{
+		p = (NodeParameter*)lfirst(lc);
+		appendStringInfo(prefix, "%s\"%s\":%s\"%s\",%s",
+						 get_indent(indent1),
+						 p->name,
+						 get_space(*indent),
+						 p->value,
+						 get_newline(*indent));
+	}
+
+	appendStringInfo(prefix, "%s\"children\":%s[%s",
+					 get_indent(indent1),
+					 get_space(*indent),
+					 get_newline(*indent));
+
+	appendStringInfo(suffix, "%s]%s%s}%s",
+					 get_indent(indent1),
+					 get_newline(*indent),
+					 get_indent(*indent),
+					 get_newline(*indent));
+
+	*indent = next_indent(indent1);
+}
+
+/*
+ * read description in header file (to keep in single place)
+ */
+char*
+serialize_node_without_children_callback_json(int indent, char *name, List *params, char *value)
 {
 	/* TODO */
 	return "";
 }
 
-static
+/*
+ * read description in header file (to keep in single place)
+ */
+void
+serialize_node_with_children_callback_xml(int *indent, char *name, List *params, StringInfo prefix, StringInfo suffix)
+{
+	/* TODO */
+}
+
+/*
+ * read description in header file (to keep in single place)
+ */
 char*
-serialize_node_without_children_callback_json(char *name, List *params, char *value)
+serialize_node_without_children_callback_xml(int indent, char *node, List *params, char *value)
 {
 	/* TODO */
 	return "";
 }
 
-static
-char*
-serialize_node_with_children_callback_xml(char *name, List *params)
-{
-	/* TODO */
-	return "";
-}
-
-static
-char*
-serialize_node_without_children_callback_xml(Node *node, List *params, char *value)
-{
-	/* TODO */
-	return "";
-}
-
-static
+/*
+ * read description in header file (to keep in single place)
+ */
 char*
 serialize_const(Const *c)
 {
@@ -81,9 +198,11 @@ serialize_const(Const *c)
 	return str.data;
 }
 
-static
+/*
+ * read description in header file (to keep in single place)
+ */
 char*
-serialize_node(Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb)
+serialize_node(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb)
 {
 	if (NULL == node)
 		return "";
@@ -102,7 +221,7 @@ serialize_node(Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNo
 		foreach (lc, nodes)
 		{
 			Node	*subnode= lfirst(lc);
-			char	*lcs	= serialize_node(subnode, nwc_cb, nwoc_cb);
+			char	*lcs	= serialize_node(indent, subnode, nwc_cb, nwoc_cb);
 
 			if(first)
 				first = false;
@@ -141,7 +260,7 @@ serialize_node(Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNo
 		foreach (lc, operands)
 		{
 			Node	*subnode= lfirst(lc);
-			char	*lcs	= serialize_node(subnode, nwc_cb, nwoc_cb);
+			char	*lcs	= serialize_node(indent, subnode, nwc_cb, nwoc_cb);
 
 			d("got string: :%s:", lcs);
 			/* TODO: use callback */
@@ -162,7 +281,7 @@ serialize_node(Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNo
 	else if(IsA(node, Const))
 	{
 		d("serialize_node Const");
-		return nwoc_cb("Const", NULL, serialize_const((Const*)node));
+		return nwoc_cb(indent, "Const", NULL, serialize_const((Const*)node));
 	}
 	else if(IsA(node, Var))
 	{
@@ -184,46 +303,40 @@ serialize_node(Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNo
 }
 
 /*
- * serialize_qual
- * qual - "implicitly-ANDed qual conditions"
- *
- * TODO:
- * iterate through list of quals
- * create json or xml structure
- * return it back as result
- * this same routine will be used with different callbacks for different types
- *
+ * read description in header file (to keep in single place)
  */
-static
 char*
-serialize_qual(List *qual, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb)
+serialize_quals(bool human_readable, List *qual, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb)
 {
+	char indent = human_readable ? 0 : -1;
+
 	if (NULL == qual)
 		return "";
 
 	if(0 == list_length(qual))
 	{
+		d("serialize_qual 0==length(qual)");
+
 		return "";
 	}
 	if(1 == list_length(qual))
 	{
-		d("serialize_qual 1==length");
-		return serialize_node((Node*)lfirst(list_head(qual)), nwc_cb, nwoc_cb);
+		d("serialize_qual 1==length(qual)");
+
+		return serialize_node(indent, (Node*)lfirst(list_head(qual)), nwc_cb, nwoc_cb);
 	}
 	else
 	{
 		BoolExpr	expr;
 
-		d("serialize_qual 1<length");
+		d("serialize_qual 1<length(qual)");
 
 		expr.xpr.type	= T_BoolExpr;
 		expr.boolop		= AND_EXPR;
 		expr.args		= qual;
 		expr.location	= -1; /* unknown */
-		return serialize_node((Node*)&expr, nwc_cb, nwoc_cb);
+		return serialize_node(indent, (Node*)&expr, nwc_cb, nwoc_cb);
 	}
 
 	return "";
 }
-
-#endif
