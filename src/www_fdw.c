@@ -238,13 +238,13 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 		if(parse_parameter("request_serialize_human_readable", &request_serialize_human_readable, def))
 		{
 			if(
-				0 != strcmp(response_type, "0")
+				0 != strcmp(request_serialize_human_readable, "0")
 				&&
-				0 != strcmp(response_type, "1")
+				0 != strcmp(request_serialize_human_readable, "1")
 			)
 			{
 				ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("invalid value for request_serialize_human_readable: %s (0 or 1 are available only)", response_type)
+					errmsg("invalid value for request_serialize_human_readable: %s (0 or 1 are available only)", request_serialize_human_readable)
 					));
 			}
 			continue;
@@ -541,7 +541,8 @@ serialize_request_with_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts
 									(0 == strcmp("0",opts->request_serialize_human_readable) ? 0 : 1),
 									node->ss.ps.plan->qual,
 									serialize_node_with_children_callback_json,
-									serialize_node_without_children_callback_json) );
+									serialize_node_without_children_callback_json,
+serialize_list_separator_callback_json) );
 		nulls[1] = ' ';
 	}
 	else if(0 == strcmp("xml", opts->request_serialize_type))
@@ -551,7 +552,8 @@ serialize_request_with_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts
 									(0 == strcmp("0",opts->request_serialize_human_readable) ? 0 : 1),
 									node->ss.ps.plan->qual,
 									serialize_node_with_children_callback_xml,
-									serialize_node_without_children_callback_xml) );
+									serialize_node_without_children_callback_xml,
+									serialize_list_separator_callback_xml) );
 		nulls[1] = ' ';
 	}
 	else
@@ -1339,7 +1341,9 @@ prepare_xml_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type,
 	for( it = result->children; NULL != it; it = it->next )
 		reply->ntuples++;
 
-	reply->tuples = (HeapTuple*)palloc(reply->ntuples * sizeof(HeapTuple));
+	reply->tuples = (0 == reply->ntuples) ?
+		NULL :
+		(HeapTuple*)palloc(reply->ntuples * sizeof(HeapTuple));
 
 	/* prepare result column names in xmlChar* for proper comparison */
 	natts = rel->rd_att->natts;
@@ -1406,7 +1410,9 @@ prepare_json_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type
 	reply->opts_type = opts_type;
 	reply->opts_value = opts_value;
 	reply->ntuples	= result->length;
-	reply->tuples	= (HeapTuple*)palloc(result->length * sizeof(HeapTuple));
+	reply->tuples	= 0 == reply->ntuples ?
+		NULL :
+		(HeapTuple*)palloc(result->length * sizeof(HeapTuple));
 
 	natts = rel->rd_att->natts;
 	values = (char **) palloc(sizeof(char *) * natts);
@@ -1591,7 +1597,7 @@ www_begin(ForeignScanState *node, int eflags)
 			node->fdw_state = (void*)prepare_json_result(node, opts, opts_type, opts_value, root);
 
 			json_parser_free(&json_parserr);
-			/* all data from tree was trully copid, free it up: */
+			/* all data from tree was trully copied, free it up: */
 			json_free_tree(root);
 		}
 	}
@@ -1628,7 +1634,7 @@ www_begin(ForeignScanState *node, int eflags)
 
 			node->fdw_state = (void*)prepare_xml_result(node, opts, opts_type, opts_value, doc);
 
-			/* result data was trully copid: free it up */
+			/* result data was trully copied: free it up */
 			xmlFreeDoc(doc);
 		}
 	}

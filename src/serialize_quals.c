@@ -75,85 +75,276 @@ next_indent(int indent)
 	return -1 == indent ? indent : indent+1;
 }
 
-/*
- * read description in header file (to keep in single place)
- */
+/* read description in header file (to keep in single place) */
 void
 serialize_node_with_children_callback_json(int *indent, char *name, List *params, StringInfo prefix, StringInfo suffix)
 {
-	char indent1 = next_indent(*indent);
+	char indent1 = next_indent(*indent),
+		indent2 = next_indent(indent1),
+		*p, *pname;
 	ListCell *lc;
-	NodeParameter	*p;
+	unsigned char idx;
+	bool first;
 
-	appendStringInfo(prefix, "%s{%s%s\"name\":%s\"%s\",%s",
+	d("serialize_node_with_children_callback_json: indent - %i, name - '%s'", *indent, name);
+
+	appendStringInfo(prefix, "%s{%s%s\"name\":%s\"%s\",%s%s\"params\"%s:%s[%s",
 					 get_indent(*indent),
 					 get_newline(*indent),
 					 get_indent(indent1),
 					 get_space(*indent),
 					 name,
+					 get_newline(*indent),
+					 get_indent(indent1),
+					 get_space(*indent),
+					 get_space(*indent),
 					 get_newline(*indent));
 
+	first = true;
+	idx = 0;
 	foreach (lc, params)
 	{
-		p = (NodeParameter*)lfirst(lc);
-		appendStringInfo(prefix, "%s\"%s\":%s\"%s\",%s",
-						 get_indent(indent1),
-						 p->name,
-						 get_space(*indent),
-						 p->value,
-						 get_newline(*indent));
-	}
+		p = (char*)lfirst(lc);
 
-	appendStringInfo(prefix, "%s\"children\":%s[%s",
+		if(0 == idx) {
+			pname = p;
+			idx++;
+		}
+		else
+		{
+			if(first)
+				first = false;
+			else
+				appendStringInfo(prefix, ",%s", get_newline(*indent));
+
+			appendStringInfo(prefix, "%s\"%s\":%s\"%s\"",
+							 get_indent(indent2),
+							 pname,
+							 get_space(*indent),
+							 p);
+
+			idx = 0;
+		}
+	}
+	if(!first)
+		appendStringInfo(prefix, "%s", get_newline(*indent) );
+
+	appendStringInfo(prefix, "%s],%s%s\"children\":%s[%s",
+					 get_indent(indent1),
+					 get_newline(*indent),
 					 get_indent(indent1),
 					 get_space(*indent),
 					 get_newline(*indent));
 
-	appendStringInfo(suffix, "%s]%s%s}%s",
+	appendStringInfo(suffix, "%s%s]%s%s}%s",
+					 get_newline(*indent),
 					 get_indent(indent1),
 					 get_newline(*indent),
 					 get_indent(*indent),
 					 get_newline(*indent));
 
-	*indent = next_indent(indent1);
+	*indent = indent2;
 }
 
-/*
- * read description in header file (to keep in single place)
- */
+/* read description in header file (to keep in single place) */
 char*
 serialize_node_without_children_callback_json(int indent, char *name, List *params, char *value)
 {
-	/* TODO */
-	return "";
+	StringInfoData str;
+	char indent1 = next_indent(indent),
+		indent2 = next_indent(indent1),
+		*p, *pname;
+	ListCell *lc;
+	unsigned char idx;
+	bool first;
+
+	d("serialize_node_without_children_callback_json: indent - %i, name - '%s', value - '%s'", indent, name, value);
+
+	initStringInfo(&str);
+	appendStringInfo(&str, "%s{%s%s\"name\":%s\"%s\",%s%s\"params\"%s:%s[%s",
+					 get_indent(indent),
+					 get_newline(indent),
+					 get_indent(indent1),
+					 get_space(indent),
+					 name,
+					 get_newline(indent),
+					 get_indent(indent1),
+					 get_space(indent),
+					 get_space(indent),
+					 get_newline(indent));
+
+	first = true;
+	idx = 0;
+	foreach (lc, params)
+	{
+		p = (char*)lfirst(lc);
+
+		if(0 == idx)
+		{
+			pname = p;
+			idx++;
+		}
+		else
+		{
+			if(first)
+				first = false;
+			else
+				appendStringInfo(&str, ",%s", get_newline(indent));
+
+			appendStringInfo(&str, "%s\"%s\":%s\"%s\"",
+							 get_indent(indent2),
+							 pname,
+							 get_space(indent),
+							 p);
+
+			idx = 0;
+		}
+	}
+	if(!first)
+		appendStringInfo(&str, "%s", get_newline(indent) );
+
+	appendStringInfo(&str, "%s],%s%s\"value\":%s\"%s\"%s%s}",
+					 get_indent(indent1),
+					 get_newline(indent),
+					 get_indent(indent1),
+					 get_space(indent),
+					 value,
+					 get_newline(indent),
+					 get_indent(indent));
+
+	return str.data;
 }
 
-/*
- * read description in header file (to keep in single place)
- */
+/* read description in header file (to keep in single place) */
+char*
+serialize_list_separator_callback_json(int indent)
+{
+	StringInfoData str;
+
+	initStringInfo(&str);
+	appendStringInfo(&str, ",%s", get_newline(indent));
+
+	return str.data;
+}
+
+/* read description in header file (to keep in single place) */
 void
 serialize_node_with_children_callback_xml(int *indent, char *name, List *params, StringInfo prefix, StringInfo suffix)
 {
-	/* TODO */
+	char indent1 = next_indent(*indent);
+	char indent2 = next_indent(indent1);
+	ListCell *lc;
+	char *p, *pname;
+	unsigned char idx;
+
+	d("serialize_node_with_children_callback_xml: indent - %i, name - '%s'", *indent, name);
+
+	appendStringInfo(prefix, "%s<node name=\"%s\">%s%s<params>%s",
+					 get_indent(*indent),
+					 name,
+					 get_newline(*indent),
+					 get_indent(indent1),
+					 get_newline(*indent));
+
+	idx = 0;
+	foreach (lc, params)
+	{
+		p = (char*)lfirst(lc);
+
+		if(0 == idx)
+		{
+			pname = p;
+			idx++;
+		}
+		else
+		{
+			appendStringInfo(prefix, "%s<param name=\"%s\" value=\"%s\"/>%s",
+							 get_indent(indent2),
+							 pname,
+							 p,
+							 get_newline(*indent));
+			idx = 0;
+		}
+	}
+
+	appendStringInfo(prefix, "%s</params>%s%s<children>%s",
+					 get_indent(indent1),
+					 get_newline(*indent),
+					 get_indent(indent1),
+					 get_newline(*indent));
+
+	appendStringInfo(suffix, "%s</children>%s%s</node>%s",
+					 get_indent(indent1),
+					 get_newline(*indent),
+					 get_indent(*indent),
+					 get_newline(*indent));
+
+	*indent = indent2;
 }
 
-/*
- * read description in header file (to keep in single place)
- */
+/* read description in header file (to keep in single place) */
 char*
-serialize_node_without_children_callback_xml(int indent, char *node, List *params, char *value)
+serialize_node_without_children_callback_xml(int indent, char *name, List *params, char *value)
 {
-	/* TODO */
-	return "";
+	StringInfoData str;
+	char indent1 = next_indent(indent);
+	char indent2 = next_indent(indent1);
+	ListCell *lc;
+	char *p, *pname;
+	unsigned char idx;
+
+	d("serialize_node_without_children_callback_xml: indent - %i, name - '%s', value - '%s'", indent, name, value);
+
+	initStringInfo(&str);
+	appendStringInfo(&str, "%s<node name=\"%s\" value=\"%s\">%s%s<params>%s",
+					 get_indent(indent),
+					 name,
+					 value,
+					 get_newline(indent),
+					 get_indent(indent1),
+					 get_newline(indent));
+
+	idx = 0;
+	foreach (lc, params)
+	{
+		p = (char*)lfirst(lc);
+
+		if(0 == idx)
+		{
+			pname = p;
+			idx++;
+		}
+		else
+		{
+			appendStringInfo(&str, "%s<param name=\"%s\" value=\"%s\"/>%s",
+							 get_indent(indent2),
+							 pname,
+							 p,
+							 get_newline(indent));
+			idx = 0;
+		}
+	}
+
+	appendStringInfo(&str, "%s</params>%s%s</node>%s",
+					 get_indent(indent1),
+					 get_newline(indent),
+					 get_indent(indent),
+					 get_newline(indent));
+
+	return str.data;
 }
 
-/*
- * read description in header file (to keep in single place)
- */
+/* read description in header file (to keep in single place) */
+char*
+serialize_list_separator_callback_xml(int indent)
+{
+	return get_newline(indent);
+}
+
+/* read description in header file (to keep in single place) */
 char*
 serialize_const(Const *c)
 {
-	/* TODO: check it */
 	StringInfoData str;
 
 	d("serialize_const");
@@ -161,10 +352,7 @@ serialize_const(Const *c)
 	initStringInfo(&str);
 
 	if(c->constisnull)
-	{
-		appendStringInfo(&str, "null");
-		return str.data;
-	}
+		return "null";
 
 	switch(c->consttype)
 	{
@@ -198,85 +386,221 @@ serialize_const(Const *c)
 	return str.data;
 }
 
-/*
- * read description in header file (to keep in single place)
- */
+static
 char*
-serialize_node(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb)
+oid_to_string(Oid oid)
 {
+	/* 32 is over than represenation unsigned int in decimal chars */
+	char *r = (char*)palloc(32*sizeof(char));
+	sprintf( r, "%u", oid);
+	return r;
+}
+
+static
+char*
+int_to_string(int i)
+{
+	/* 32 is over than represenation unsigned int in decimal chars */
+	char *r = (char*)palloc(32*sizeof(char));
+	sprintf( r, "%i", i);
+	return r;
+}
+
+static
+char*
+attrnumber_to_string(AttrNumber attrn)
+{
+	return int_to_string((int)attrn);
+}
+
+static
+char*
+index_to_string(Index idx)
+{
+	/* 32 is over than represenation unsigned int in decimal chars */
+	char *r = (char*)palloc(32*sizeof(char));
+	sprintf( r, "%u", idx);
+	return r;
+}
+
+static
+char*
+bool_to_string(bool b)
+{
+	char *r = (char*)palloc(2*sizeof(char));
+	r[0] = b;
+	r[1] = '\0';
+	return r;
+}
+
+/* read description in header file (to keep in single place) */
+char*
+
+serialize_node(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
+{
+	d("serialize_node");
+
 	if (NULL == node)
 		return "";
 
 	if(IsA(node, List))
 	{
 		ListCell   *lc;
-		List	   *nodes = list_copy((List*)node);
-		StringInfoData res;
+		List	   *children = ((List*)node);
+		StringInfoData prefix, suffix, childrens;
 		bool		first = true;
+		int			indentc = indent;
+		List		*params = NULL;
+		char		*sep = NULL;
 
 		d("serialize_node List");
 
-		initStringInfo(&res);
+		initStringInfo(&prefix);
+		initStringInfo(&suffix);
+		initStringInfo(&childrens);
 
-		foreach (lc, nodes)
+		/* no params for List */
+		/*params	= lappend(params, (void*));*/
+		nwc_cb(&indentc, "List", params, &prefix, &suffix);
+
+		foreach (lc, children)
 		{
-			Node	*subnode= lfirst(lc);
-			char	*lcs	= serialize_node(indent, subnode, nwc_cb, nwoc_cb);
+			Node	*child	= lfirst(lc);
 
-			if(first)
-				first = false;
+			if(!first)
+			{
+				if(NULL == sep)
+					sep = ls_cb(indentc);
+
+				appendStringInfoString(&childrens, sep);
+			}
 			else
-				/* TODO: use type callback */
-				appendStringInfoString(&res, " AND ");
+				first = false;
 
-			/* TODO: use type callback */
-			appendStringInfoString(&res, lcs);
+			appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
 		}
 
-		return res.data;
+		appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
+		appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
+
+		return prefix.data;
 	}
 	else if (IsA(node, OpExpr))
 	{
 		OpExpr	   *op = (OpExpr *)node;
 		ListCell   *lc;
-		List	   *operands = list_copy(op->args),
-			*params = NULL;
-		StringInfoData res;
-		/*char opno[3], opfuncid[3], opresulttype[3];*/
+		List	   *params = NULL;
+		StringInfoData prefix, suffix, childrens;
+		bool		first = true;
+		int			indentc = indent;
+		char		*sep = NULL;
 
 		d("serialize_node OpExpr");
 
-		initStringInfo(&res);
+		initStringInfo(&prefix);
+		initStringInfo(&suffix);
+		initStringInfo(&childrens);
 
-		/* TODO: use callback */
-		/* init res with operator description */
-		/*if (op->opfuncid != F_TEXTEQ)*/
-
-		/* TODO DEBUGk HERE: call to callbacks */
+		/* create parameters */
 		params = lappend(params, "opno");
-		/*params = lappend(params, op->opno);*/
-		/*appendStringInfoString(&res, nwc_cb("OpExpr"));*/
+		params = lappend(params, oid_to_string(op->opno));
+		/* TODO translate funcid? */
+		/*if (op->opfuncid != F_TEXTEQ)*/
+		params = lappend(params, "opfuncid");
+		params = lappend(params, oid_to_string(op->opfuncid));
+		params = lappend(params, "opresulttype");
+		params = lappend(params, oid_to_string(op->opresulttype));
+		params = lappend(params, "opretset");
+		params = lappend(params, bool_to_string(op->opretset));
+		params = lappend(params, "opcollid");
+		params = lappend(params, oid_to_string(op->opcollid));
+		params = lappend(params, "inputcollid");
+		params = lappend(params, oid_to_string(op->inputcollid));
+		params = lappend(params, "location");
+		params = lappend(params, int_to_string(op->location));
+		nwc_cb(&indentc, "OpExpr", params, &prefix, &suffix);
 
-		foreach (lc, operands)
+		foreach (lc, op->args)
 		{
-			Node	*subnode= lfirst(lc);
-			char	*lcs	= serialize_node(indent, subnode, nwc_cb, nwoc_cb);
+			Node	*child	= lfirst(lc);
 
-			d("got string: :%s:", lcs);
-			/* TODO: use callback */
-			appendStringInfoString(&res, lcs);
+			if(!first)
+			{
+				if(NULL == sep)
+					sep = ls_cb(indentc);
+
+				appendStringInfoString(&childrens, sep);
+			}
+			else
+				first = false;
+
+			appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
 		}
 
-		return res.data;
+		appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
+		appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
+
+		return prefix.data;
 	}
 	else if(IsA(node, BoolExpr))
 	{
-		/*BoolExpr *expr	= (BoolExpr*)node;*/
-		/* TODO */
-		/*AND_EXPR, OR_EXPR, NOT_EXPR*/
+		BoolExpr   *op = (BoolExpr*)node;
+		ListCell   *lc;
+		List	   *params = NULL;
+		StringInfoData prefix, suffix, childrens;
+		bool		first = true;
+		int			indentc = indent;
+		char		*sep = NULL,
+			*boolop = NULL;
+
 		d("serialize_node BoolExpr");
 
-		return "";
+		initStringInfo(&prefix);
+		initStringInfo(&suffix);
+		initStringInfo(&childrens);
+
+		/* create parameters */
+		switch(op->boolop)
+		{
+			case AND_EXPR:
+				boolop = "AND";
+				break;
+			case OR_EXPR:
+				boolop = "OR";
+				break;
+			case NOT_EXPR:
+				boolop = "NOT";
+				break;
+			default:
+				boolop = "ERROR";
+		}
+		params = lappend(params, "boolop");
+		params = lappend(params, boolop);
+		params = lappend(params, "location");
+		params = lappend(params, int_to_string(op->location));
+		nwc_cb(&indentc, "BoolExpr", params, &prefix, &suffix);
+
+		foreach (lc, op->args)
+		{
+			Node	*child	= lfirst(lc);
+
+			if(!first)
+			{
+				if(NULL == sep)
+					sep = ls_cb(indentc);
+
+				appendStringInfoString(&childrens, sep);
+			}
+			else
+				first = false;
+
+			appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
+		}
+
+		appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
+		appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
+
+		return prefix.data;
 	}
 	else if(IsA(node, Const))
 	{
@@ -285,28 +609,52 @@ serialize_node(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb,
 	}
 	else if(IsA(node, Var))
 	{
-		/*Var *v = (Var*)node;*/
-		/* TODO */
+		Var *v = (Var*)node;
+		List	   *params = NULL;
+
 		d("serialize_node Var");
 
-		return "";
+		/* create parameters */
+		params = lappend(params, "varno");
+		params = lappend(params, index_to_string(v->varno));
+		params = lappend(params, "varattno");
+		params = lappend(params, attrnumber_to_string(v->varattno));
+		params = lappend(params, "vartype");
+		params = lappend(params, oid_to_string(v->vartype));
+		params = lappend(params, "vartypmod");
+		params = lappend(params, int_to_string(v->vartypmod));
+		params = lappend(params, "varcollid");
+		params = lappend(params, oid_to_string(v->varcollid));
+		params = lappend(params, "varlevelsup");
+		params = lappend(params, index_to_string(v->varlevelsup));
+		params = lappend(params, "varnoold");
+		params = lappend(params, index_to_string(v->varnoold));
+		params = lappend(params, "varoattno");
+		params = lappend(params, attrnumber_to_string(v->varoattno));
+		params = lappend(params, "location");
+		params = lappend(params, int_to_string(v->location));
+
+		return nwoc_cb(indent, "Var", params, "");
 	}
 	else
 	{
-		/* TODO add basic info about this unhandled type */
+		List	   *params = NULL;
+
 		d("serialize_node else");
 
-		return "";
+		/* create parameters */
+		params = lappend(params, "type");
+		params = lappend(params, int_to_string(nodeTag(node)));
+
+		return nwoc_cb(indent, "UNHANDLED", params, "");
 	}
 
 	return "";
 }
 
-/*
- * read description in header file (to keep in single place)
- */
+/* read description in header file (to keep in single place) */
 char*
-serialize_quals(bool human_readable, List *qual, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb)
+serialize_quals(bool human_readable, List *qual, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
 {
 	char indent = human_readable ? 0 : -1;
 
@@ -323,7 +671,7 @@ serialize_quals(bool human_readable, List *qual, SerializeNodeWithChildrenCallba
 	{
 		d("serialize_qual 1==length(qual)");
 
-		return serialize_node(indent, (Node*)lfirst(list_head(qual)), nwc_cb, nwoc_cb);
+		return serialize_node(indent, (Node*)lfirst(list_head(qual)), nwc_cb, nwoc_cb, ls_cb);
 	}
 	else
 	{
@@ -335,7 +683,7 @@ serialize_quals(bool human_readable, List *qual, SerializeNodeWithChildrenCallba
 		expr.boolop		= AND_EXPR;
 		expr.args		= qual;
 		expr.location	= -1; /* unknown */
-		return serialize_node(indent, (Node*)&expr, nwc_cb, nwoc_cb);
+		return serialize_node(indent, (Node*)&expr, nwc_cb, nwoc_cb, ls_cb);
 	}
 
 	return "";

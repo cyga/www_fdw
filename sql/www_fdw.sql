@@ -13,7 +13,8 @@ CREATE TYPE WWWFdwOptions AS (
 	method_delete						text,
 	method_update						text,
 	request_serialize_callback			text,
-	request_serialize_type			text,
+	request_serialize_type				text,
+	request_serialize_human_readable	text,
 	response_type						text,
 	response_deserialize_callback		text,
 	response_iterate_callback			text

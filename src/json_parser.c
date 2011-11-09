@@ -158,7 +158,7 @@ json_tree_append(void *structure, char *key, uint32_t key_length, void *obj)
 void
 json_free_tree(JSONNode* t)
 {
-	int	i	= 0;
+	int	i;
 
 	if(t->key) free(t->key);
 
@@ -166,12 +166,12 @@ json_free_tree(JSONNode* t)
 		case JSON_OBJECT_BEGIN:
 			for( i=0; i<t->length; i++ )
 				json_free_tree(&(t->val.val_object[i]));
-			free(t->val.val_object);
+			if(t->length) free(t->val.val_object);
 			break;
 		case JSON_ARRAY_BEGIN:
 			for( i=0; i<t->length; i++ )
 				json_free_tree(&(t->val.val_array[i]));
-			free(t->val.val_array);
+			if(t->length) free(t->val.val_array);
 			break;
 		case JSON_STRING:
 			if(t->val.val_string)	free(t->val.val_string);

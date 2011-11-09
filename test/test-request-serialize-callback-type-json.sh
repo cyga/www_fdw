@@ -11,54 +11,19 @@ trap 'if [ -n "$spid" ]; then echo "killing server $spid"; kill $spid; fi; exit'
 
 $psql -f "$test_dir/request-serialize-callback-type-json.sql"
 
-perl -Mojo -e'a("/"=>sub{$c=shift;$t=$c->param("title");$c->render_json({nrows=>2,rows=>[{title=>$t,link=>"l0",snippet=>"s0"},{title=>$t,link=>"l1",snippet=>"s1"}]})})->start' daemon --listen http://*:7777 &
+perl -Mojo -e'a("/"=> { json => []})->start' daemon --listen http://*:7777 &
 spid=$!
 sleep $waits
 
 sql="select * from www_fdw_test"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0\ntitel|l1|s1' "$sql"
+r=`$psql -tA -c"$sql" 2>&1`
+test "$r" $'INFO:  quals parameter: \nCONTEXT:  SQL statement "SELECT * FROM test_request_serialize_callback($1,$2,$3,$4)"' "$sql"
 
-# same query (on purpose):
-sql="select * from www_fdw_test"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0\ntitel|l1|s1' "$sql"
-
-sql="select * from www_fdw_test limit 1"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0' "$sql"
-
-# same query (on purpose):
-sql="select * from www_fdw_test limit 1"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0' "$sql"
-
-sql="select * from www_fdw_test order by link"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0\ntitel|l1|s1' "$sql"
-
-sql="select * from www_fdw_test order by link desc"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l1|s1\ntitel|l0|s0' "$sql"
-
-sql="select * from www_fdw_test order by link limit 1"
-r=`$psql -tA -c"$sql"`
-test "$r" $'titel|l0|s0' "$sql"
-
+# TODO DEBUGk HERE: use separate files (in separate folder)
+# to check diffs
+# qa/fix serialize
 sql="select * from www_fdw_test where title='TITLE'"
-r=`$psql -tA -c"$sql"`
-test "$r" $'TITLE|l0|s0\nTITLE|l1|s1' "$sql"
-
-sql="select * from www_fdw_test order title='TITLE' and link='LINK'"
-r=`$psql -tA -c"$sql"`
-test "$r" $'TITLE|LINK|s0\nTITLE|LINK|s1' "$sql"
-
-sql="select * from www_fdw_test order title='TITLE' and link='LINK' order by snippet desc"
-r=`$psql -tA -c"$sql"`
-test "$r" $'TITLE|LINK|s1\nTITLE|LINK|s0' "$sql"
-
-sql="select * from www_fdw_test order title='TITLE' and link='LINK' order by snippet desc limit 1"
-r=`$psql -tA -c"$sql"`
-test "$r" $'TITLE|LINK|s1' "$sql"
+r=`$psql -tA -c"$sql" 2>&1`
+test "$r" $'INFO:  quals parameter: {"name":"OpExpr","params":["opno":"98","opfuncid":"67","opresulttype":"16","opretset":"","opcollid":"0","inputcollid":"100","location":"38"],"children":[{"name":"Var","params":["varno":"1","varattno":"1","vartype":"25","vartypmod":"-1","varcollid":"100","varlevelsup":"0","varnoold":"1","varoattno":"1","location":"33"],"value":""},{"name":"Const","params":[],"value":"TITLE"}]}\nCONTEXT:  SQL statement "SELECT * FROM test_request_serialize_callback($1,$2,$3,$4)"' "$sql"
 
 kill $spid
