@@ -20,6 +20,8 @@ fi
 
 trap 'let fall=$fsuccess+$ffailed;echo;echo "Tests files run: $fall";echo "Ok: $fsuccess";echo "Failed: $ffailed"; if [ 0 -lt "$ffailed" ]; then exit 1; fi' EXIT
 
+fsuccess=0
+ffailed=0
 for t in $test_dir/test-*.sh; do
 	if [[ "$0" == "$t" ]]; then
 		echo "skipping itself: '$t'"
