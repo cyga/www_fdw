@@ -1,5 +1,5 @@
 #!/bin/bash
-sucess=0
+success=0
 failed=0
 function test
 {
@@ -8,7 +8,7 @@ function test
 		echo "Ok       $3"
 	else
 		let failed=$failed+1
-		echo "Failed   $3"
+		echo "Failed   $3" >&2
 		echo -e "  Result:   '$1'"
 		echo -e "  Expected: '$2'"
 	fi
