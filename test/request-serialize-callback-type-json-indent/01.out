@@ -1,0 +1,35 @@
+INFO:  quals parameter: {
+	"name": "OpExpr",
+	"params" : [
+		"opno": "98",
+		"opfuncid": "67",
+		"opresulttype": "16",
+		"opretset": "f",
+		"opcollid": "0",
+		"inputcollid": "100",
+		"location": "38"
+	],
+	"children": [
+		{
+			"name": "Var",
+			"params" : [
+				"varno": "1",
+				"varattno": "1",
+				"vartype": "25",
+				"vartypmod": "-1",
+				"varcollid": "100",
+				"varlevelsup": "0",
+				"varnoold": "1",
+				"varoattno": "1",
+				"location": "33"
+			],
+			"value": ""
+		},
+		{
+			"name": "Const",
+			"params" : [
+			],
+			"value": "TITLE"
+		}
+	]
+}

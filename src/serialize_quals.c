@@ -136,12 +136,11 @@ serialize_node_with_children_callback_json(int *indent, char *name, List *params
 					 get_space(*indent),
 					 get_newline(*indent));
 
-	appendStringInfo(suffix, "%s%s]%s%s}%s",
+	appendStringInfo(suffix, "%s%s]%s%s}",
 					 get_newline(*indent),
 					 get_indent(indent1),
 					 get_newline(*indent),
-					 get_indent(*indent),
-					 get_newline(*indent));
+					 get_indent(*indent));
 
 	*indent = indent2;
 }
@@ -428,14 +427,349 @@ char*
 bool_to_string(bool b)
 {
 	char *r = (char*)palloc(2*sizeof(char));
-	r[0] = b;
+	r[0] = b ? 't' : 'f';
 	r[1] = '\0';
 	return r;
 }
 
+static
+char*
+serialize_node_list(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
+{
+	ListCell   *lc;
+	List	   *children = ((List*)node);
+	StringInfoData prefix, suffix, childrens;
+	bool		first = true;
+	int			indentc = indent;
+	List		*params = NULL;
+	char		*sep = NULL;
+
+	d("serialize_node List");
+
+	initStringInfo(&prefix);
+	initStringInfo(&suffix);
+	initStringInfo(&childrens);
+
+	/* no params for List */
+	/*params	= lappend(params, (void*));*/
+	nwc_cb(&indentc, "List", params, &prefix, &suffix);
+
+	foreach (lc, children)
+	{
+		Node	*child	= lfirst(lc);
+
+		if(!first)
+		{
+			if(NULL == sep)
+				sep = ls_cb(indentc);
+
+			appendStringInfoString(&childrens, sep);
+		}
+		else
+			first = false;
+
+		appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
+	}
+
+	appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
+	appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
+
+	return prefix.data;
+}
+
+static
+char*
+serialize_node_opexpr(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
+{
+	OpExpr	   *op = (OpExpr *)node;
+	ListCell   *lc;
+	List	   *params = NULL;
+	StringInfoData prefix, suffix, childrens;
+	bool		first = true;
+	int			indentc = indent;
+	char		*sep = NULL;
+
+	d("serialize_node OpExpr");
+
+	initStringInfo(&prefix);
+	initStringInfo(&suffix);
+	initStringInfo(&childrens);
+
+	/* create parameters */
+	params = lappend(params, "opno");
+	params = lappend(params, oid_to_string(op->opno));
+	params = lappend(params, "opfuncid");
+	params = lappend(params, oid_to_string(op->opfuncid));
+	params = lappend(params, "opresulttype");
+	params = lappend(params, oid_to_string(op->opresulttype));
+	params = lappend(params, "opretset");
+	params = lappend(params, bool_to_string(op->opretset));
+	params = lappend(params, "opcollid");
+	params = lappend(params, oid_to_string(op->opcollid));
+	params = lappend(params, "inputcollid");
+	params = lappend(params, oid_to_string(op->inputcollid));
+	params = lappend(params, "location");
+	params = lappend(params, int_to_string(op->location));
+	nwc_cb(&indentc, "OpExpr", params, &prefix, &suffix);
+
+	foreach (lc, op->args)
+	{
+		Node	*child	= lfirst(lc);
+
+		if(!first)
+		{
+			if(NULL == sep)
+				sep = ls_cb(indentc);
+
+			appendStringInfoString(&childrens, sep);
+		}
+		else
+			first = false;
+
+		appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
+	}
+
+	appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
+	appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
+
+	return prefix.data;
+}
+
+static
+char*
+serialize_node_funcexpr(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
+{
+	FuncExpr   *f = (FuncExpr *)node;
+	ListCell   *lc;
+	List	   *params = NULL;
+	StringInfoData prefix, suffix, childrens;
+	bool		first = true;
+	int			indentc = indent;
+	char		*sep = NULL;
+
+	d("serialize_node FuncExpr");
+
+	initStringInfo(&prefix);
+	initStringInfo(&suffix);
+	initStringInfo(&childrens);
+
+	/* create parameters */
+	params = lappend(params, "funcid");
+	params = lappend(params, oid_to_string(f->funcid));
+	params = lappend(params, "funcresulttype");
+	params = lappend(params, oid_to_string(f->funcresulttype));
+	params = lappend(params, "funcretset");
+	params = lappend(params, bool_to_string(f->funcretset));
+	/* skip funcformat */
+	params = lappend(params, "funccollid");
+	params = lappend(params, oid_to_string(f->funccollid));
+	params = lappend(params, "inputcollid");
+	params = lappend(params, oid_to_string(f->inputcollid));
+	params = lappend(params, "location");
+	params = lappend(params, int_to_string(f->location));
+	nwc_cb(&indentc, "FuncExpr", params, &prefix, &suffix);
+
+	foreach (lc, f->args)
+	{
+		Node	*child	= lfirst(lc);
+
+		if(!first)
+		{
+			if(NULL == sep)
+				sep = ls_cb(indentc);
+
+			appendStringInfoString(&childrens, sep);
+		}
+		else
+			first = false;
+
+		appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
+	}
+
+	appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
+	appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
+
+	return prefix.data;
+}
+
+static
+char*
+serialize_node_boolexpr(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
+{
+	BoolExpr   *op = (BoolExpr*)node;
+	ListCell   *lc;
+	List	   *params = NULL;
+	StringInfoData prefix, suffix, childrens;
+	bool		first = true;
+	int			indentc = indent;
+	char		*sep = NULL,
+		*boolop = NULL;
+
+	d("serialize_node BoolExpr");
+
+	initStringInfo(&prefix);
+	initStringInfo(&suffix);
+	initStringInfo(&childrens);
+
+	/* create parameters */
+	switch(op->boolop)
+	{
+		case AND_EXPR:
+			boolop = "AND";
+			break;
+		case OR_EXPR:
+			boolop = "OR";
+			break;
+		case NOT_EXPR:
+			boolop = "NOT";
+			break;
+		default:
+			boolop = "ERROR";
+	}
+	params = lappend(params, "boolop");
+	params = lappend(params, boolop);
+	params = lappend(params, "location");
+	params = lappend(params, int_to_string(op->location));
+	nwc_cb(&indentc, "BoolExpr", params, &prefix, &suffix);
+
+	foreach (lc, op->args)
+	{
+		Node	*child	= lfirst(lc);
+
+		if(!first)
+		{
+			if(NULL == sep)
+				sep = ls_cb(indentc);
+
+			appendStringInfoString(&childrens, sep);
+		}
+		else
+			first = false;
+
+		appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
+	}
+
+	appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
+	appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
+
+	return prefix.data;
+}
+
+static
+char*
+serialize_node_nulltest(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
+{
+	NullTest   *p = (NullTest*)node;
+	List	   *params = NULL;
+	StringInfoData prefix, suffix, childrens;
+	int			indentc = indent;
+	char		*nulltesttype = NULL;
+
+	d("serialize_node NullTest");
+
+	initStringInfo(&prefix);
+	initStringInfo(&suffix);
+	initStringInfo(&childrens);
+
+	/* create parameters */
+	switch(p->nulltesttype)
+	{
+		case IS_NULL:
+			nulltesttype = "IS_NULL";
+			break;
+		case IS_NOT_NULL:
+			nulltesttype = "IS_NOT_NULL";
+			break;
+		default:
+			nulltesttype = "ERROR";
+	}
+	params = lappend(params, "nulltesttype");
+	params = lappend(params, nulltesttype);
+	params = lappend(params, "argisrow");
+	params = lappend(params, bool_to_string(p->argisrow));
+	nwc_cb(&indentc, "NullTest", params, &prefix, &suffix);
+
+	appendStringInfoString(&prefix, serialize_node(indentc, (Node*)p->arg, nwc_cb, nwoc_cb, ls_cb));
+
+	appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
+
+	return prefix.data;
+}
+
+static
+char*
+serialize_node_var(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
+{
+	Var *v = (Var*)node;
+	List	   *params = NULL;
+
+	d("serialize_node Var");
+
+	/* create parameters */
+	params = lappend(params, "varno");
+	params = lappend(params, index_to_string(v->varno));
+	params = lappend(params, "varattno");
+	params = lappend(params, attrnumber_to_string(v->varattno));
+	params = lappend(params, "vartype");
+	params = lappend(params, oid_to_string(v->vartype));
+	params = lappend(params, "vartypmod");
+	params = lappend(params, int_to_string(v->vartypmod));
+	params = lappend(params, "varcollid");
+	params = lappend(params, oid_to_string(v->varcollid));
+	params = lappend(params, "varlevelsup");
+	params = lappend(params, index_to_string(v->varlevelsup));
+	params = lappend(params, "varnoold");
+	params = lappend(params, index_to_string(v->varnoold));
+	params = lappend(params, "varoattno");
+	params = lappend(params, attrnumber_to_string(v->varoattno));
+	params = lappend(params, "location");
+	params = lappend(params, int_to_string(v->location));
+
+	return nwoc_cb(indent, "Var", params, "");
+}
+
+static
+char*
+serialize_node_param(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
+{
+	Param	*p = (Param*)node;
+	List	*params = NULL;
+	char	*pstr;
+
+	d("serialize_node Param");
+
+	/* create parameters */
+	switch(p->paramkind)
+	{
+		case PARAM_EXTERN:
+			pstr = "PARAM_EXTERN";
+			break;
+		case PARAM_EXEC:
+			pstr = "PARAM_EXEC";
+		case PARAM_SUBLINK:
+			pstr = "PARAM_SUBLINK";
+			break;
+		default:
+			pstr = "ERROR";
+	}
+	params = lappend(params, "paramkind");
+	params = lappend(params, pstr);
+	params = lappend(params, "paramid");
+	params = lappend(params, int_to_string(p->paramid));
+	params = lappend(params, "paramtype");
+	params = lappend(params, oid_to_string(p->paramtype));
+	params = lappend(params, "paramtypmod");
+	params = lappend(params, int_to_string(p->paramtypmod));
+	params = lappend(params, "paramcollid");
+	params = lappend(params, oid_to_string(p->paramcollid));
+	params = lappend(params, "location");
+	params = lappend(params, int_to_string(p->location));
+
+	return nwoc_cb(indent, "Var", params, "");
+}
+
 /* read description in header file (to keep in single place) */
 char*
-
 serialize_node(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb, SerializeNodeWithoutChildrenCallback nwoc_cb, SerializeListSeparatorCallback ls_cb)
 {
 	d("serialize_node");
@@ -445,162 +779,23 @@ serialize_node(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb,
 
 	if(IsA(node, List))
 	{
-		ListCell   *lc;
-		List	   *children = ((List*)node);
-		StringInfoData prefix, suffix, childrens;
-		bool		first = true;
-		int			indentc = indent;
-		List		*params = NULL;
-		char		*sep = NULL;
-
-		d("serialize_node List");
-
-		initStringInfo(&prefix);
-		initStringInfo(&suffix);
-		initStringInfo(&childrens);
-
-		/* no params for List */
-		/*params	= lappend(params, (void*));*/
-		nwc_cb(&indentc, "List", params, &prefix, &suffix);
-
-		foreach (lc, children)
-		{
-			Node	*child	= lfirst(lc);
-
-			if(!first)
-			{
-				if(NULL == sep)
-					sep = ls_cb(indentc);
-
-				appendStringInfoString(&childrens, sep);
-			}
-			else
-				first = false;
-
-			appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
-		}
-
-		appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
-		appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
-
-		return prefix.data;
+		return serialize_node_list(indent, node, nwc_cb, nwoc_cb, ls_cb);
 	}
 	else if (IsA(node, OpExpr))
 	{
-		OpExpr	   *op = (OpExpr *)node;
-		ListCell   *lc;
-		List	   *params = NULL;
-		StringInfoData prefix, suffix, childrens;
-		bool		first = true;
-		int			indentc = indent;
-		char		*sep = NULL;
-
-		d("serialize_node OpExpr");
-
-		initStringInfo(&prefix);
-		initStringInfo(&suffix);
-		initStringInfo(&childrens);
-
-		/* create parameters */
-		params = lappend(params, "opno");
-		params = lappend(params, oid_to_string(op->opno));
-		/* TODO translate funcid? */
-		/*if (op->opfuncid != F_TEXTEQ)*/
-		params = lappend(params, "opfuncid");
-		params = lappend(params, oid_to_string(op->opfuncid));
-		params = lappend(params, "opresulttype");
-		params = lappend(params, oid_to_string(op->opresulttype));
-		params = lappend(params, "opretset");
-		params = lappend(params, bool_to_string(op->opretset));
-		params = lappend(params, "opcollid");
-		params = lappend(params, oid_to_string(op->opcollid));
-		params = lappend(params, "inputcollid");
-		params = lappend(params, oid_to_string(op->inputcollid));
-		params = lappend(params, "location");
-		params = lappend(params, int_to_string(op->location));
-		nwc_cb(&indentc, "OpExpr", params, &prefix, &suffix);
-
-		foreach (lc, op->args)
-		{
-			Node	*child	= lfirst(lc);
-
-			if(!first)
-			{
-				if(NULL == sep)
-					sep = ls_cb(indentc);
-
-				appendStringInfoString(&childrens, sep);
-			}
-			else
-				first = false;
-
-			appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
-		}
-
-		appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
-		appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
-
-		return prefix.data;
+		return serialize_node_opexpr(indent, node, nwc_cb, nwoc_cb, ls_cb);
+	}
+	else if (IsA(node, FuncExpr))
+	{
+		return serialize_node_funcexpr(indent, node, nwc_cb, nwoc_cb, ls_cb);
 	}
 	else if(IsA(node, BoolExpr))
 	{
-		BoolExpr   *op = (BoolExpr*)node;
-		ListCell   *lc;
-		List	   *params = NULL;
-		StringInfoData prefix, suffix, childrens;
-		bool		first = true;
-		int			indentc = indent;
-		char		*sep = NULL,
-			*boolop = NULL;
-
-		d("serialize_node BoolExpr");
-
-		initStringInfo(&prefix);
-		initStringInfo(&suffix);
-		initStringInfo(&childrens);
-
-		/* create parameters */
-		switch(op->boolop)
-		{
-			case AND_EXPR:
-				boolop = "AND";
-				break;
-			case OR_EXPR:
-				boolop = "OR";
-				break;
-			case NOT_EXPR:
-				boolop = "NOT";
-				break;
-			default:
-				boolop = "ERROR";
-		}
-		params = lappend(params, "boolop");
-		params = lappend(params, boolop);
-		params = lappend(params, "location");
-		params = lappend(params, int_to_string(op->location));
-		nwc_cb(&indentc, "BoolExpr", params, &prefix, &suffix);
-
-		foreach (lc, op->args)
-		{
-			Node	*child	= lfirst(lc);
-
-			if(!first)
-			{
-				if(NULL == sep)
-					sep = ls_cb(indentc);
-
-				appendStringInfoString(&childrens, sep);
-			}
-			else
-				first = false;
-
-			appendStringInfoString(&childrens, serialize_node(indentc, child, nwc_cb, nwoc_cb, ls_cb));
-		}
-
-		appendBinaryStringInfo(&prefix, childrens.data, childrens.len);
-		appendBinaryStringInfo(&prefix, suffix.data, suffix.len);
-
-		return prefix.data;
+		return serialize_node_boolexpr(indent, node, nwc_cb, nwoc_cb, ls_cb);
+	}
+	else if(IsA(node, NullTest))
+	{
+		return serialize_node_nulltest(indent, node, nwc_cb, nwoc_cb, ls_cb);
 	}
 	else if(IsA(node, Const))
 	{
@@ -609,33 +804,61 @@ serialize_node(int indent, Node *node, SerializeNodeWithChildrenCallback nwc_cb,
 	}
 	else if(IsA(node, Var))
 	{
-		Var *v = (Var*)node;
-		List	   *params = NULL;
-
-		d("serialize_node Var");
-
-		/* create parameters */
-		params = lappend(params, "varno");
-		params = lappend(params, index_to_string(v->varno));
-		params = lappend(params, "varattno");
-		params = lappend(params, attrnumber_to_string(v->varattno));
-		params = lappend(params, "vartype");
-		params = lappend(params, oid_to_string(v->vartype));
-		params = lappend(params, "vartypmod");
-		params = lappend(params, int_to_string(v->vartypmod));
-		params = lappend(params, "varcollid");
-		params = lappend(params, oid_to_string(v->varcollid));
-		params = lappend(params, "varlevelsup");
-		params = lappend(params, index_to_string(v->varlevelsup));
-		params = lappend(params, "varnoold");
-		params = lappend(params, index_to_string(v->varnoold));
-		params = lappend(params, "varoattno");
-		params = lappend(params, attrnumber_to_string(v->varoattno));
-		params = lappend(params, "location");
-		params = lappend(params, int_to_string(v->location));
-
-		return nwoc_cb(indent, "Var", params, "");
+		return serialize_node_var(indent, node, nwc_cb, nwoc_cb, ls_cb);
 	}
+	else if(IsA(node, Param))
+	{
+		return serialize_node_param(indent, node, nwc_cb, nwoc_cb, ls_cb);
+	}
+/*
+ TODO: implement following tags here (tags for primitive nodes):
+	T_Alias = 300,
+	T_RangeVar,
+	T_Expr,
+	+T_Var,
+	+T_Const,
+	+T_Param,
+	T_Aggref,
+	T_WindowFunc,
+	T_ArrayRef,
+	+T_FuncExpr,
+	T_NamedArgExpr,
+	+T_OpExpr,
+	T_DistinctExpr,
+	T_NullIfExpr,
+	T_ScalarArrayOpExpr,
+	+T_BoolExpr,
+	T_SubLink,
+	T_SubPlan,
+	T_AlternativeSubPlan,
+	T_FieldSelect,
+	T_FieldStore,
+	T_RelabelType,
+	T_CoerceViaIO,
+	T_ArrayCoerceExpr,
+	T_ConvertRowtypeExpr,
+	T_CollateExpr,
+	T_CaseExpr,
+	T_CaseWhen,
+	T_CaseTestExpr,
+	T_ArrayExpr,
+	T_RowExpr,
+	T_RowCompareExpr,
+	T_CoalesceExpr,
+	T_MinMaxExpr,
+	T_XmlExpr,
+	+T_NullTest,
+	T_BooleanTest,
+	T_CoerceToDomain,
+	T_CoerceToDomainValue,
+	T_SetToDefault,
+	T_CurrentOfExpr,
+	T_TargetEntry,
+	T_RangeTblRef,
+	T_JoinExpr,
+	T_FromExpr,
+	T_IntoClause,
+*/
 	else
 	{
 		List	   *params = NULL;

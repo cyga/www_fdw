@@ -1,0 +1,24 @@
+INFO:  quals parameter: {
+	"name": "NullTest",
+	"params" : [
+		"nulltesttype": "IS_NULL",
+		"argisrow": "f"
+	],
+	"children": [
+		{
+			"name": "Var",
+			"params" : [
+				"varno": "1",
+				"varattno": "1",
+				"vartype": "25",
+				"vartypmod": "-1",
+				"varcollid": "100",
+				"varlevelsup": "0",
+				"varnoold": "1",
+				"varoattno": "1",
+				"location": "33"
+			],
+			"value": ""
+		}
+	]
+}
