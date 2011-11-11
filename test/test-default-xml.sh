@@ -73,3 +73,5 @@ test "$r" $'3||SNIPPeT' "$sql"
 
 kill $spid
 
+# clean up
+$psql -c"DROP EXTENSION IF EXISTS www_fdw CASCADE"

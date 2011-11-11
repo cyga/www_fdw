@@ -1,14 +1,3 @@
-* more tests and fixes
-1 day
-
-* xml/json for request_serialize_callback
-1 day
-
-* clean up for tests
-  ** post_data table any other tables
-  ** types (drop cascade of extension?)
-  ** extension itself (drop cascade?)
-
 * docs
   ** README.md
   1/4 day

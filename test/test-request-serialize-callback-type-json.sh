@@ -34,3 +34,6 @@ for inf in "$test_dir/request-serialize-callback-type-json-indent/"*".in"; do
 done
 
 kill $spid
+
+# clean up
+$psql -c"DROP EXTENSION IF EXISTS www_fdw CASCADE"

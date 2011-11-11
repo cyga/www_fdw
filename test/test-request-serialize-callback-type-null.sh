@@ -36,3 +36,6 @@ r=`$psql -tA -c"$sql"`
 test "$r" $'titel2|l0|s0' "$sql"
 
 kill $spid
+
+# clean up
+$psql -c"DROP EXTENSION IF EXISTS www_fdw CASCADE"

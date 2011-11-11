@@ -86,3 +86,7 @@ r=`$psql -tA -c"$sql"`
 test "$r" $'post_title2|post_link2|post_snippet2' "$sql"
 
 kill $spid
+
+# clean up
+$psql -c"DROP TABLE IF EXISTS post_data"
+$psql -c"DROP EXTENSION IF EXISTS www_fdw CASCADE"
