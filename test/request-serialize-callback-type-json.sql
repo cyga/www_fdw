@@ -10,9 +10,7 @@ CREATE FOREIGN TABLE www_fdw_test (
 CREATE OR REPLACE FUNCTION test_request_serialize_callback(options WWWFdwOptions, quals text, INOUT url text, INOUT post WWWFdwPostParameters) AS $$
 BEGIN
 	RAISE DEBUG 'options parameter: %', options;
---	RAISE DEBUG 'quals parameter: %', quals;
+	RAISE INFO 'quals parameter: %', quals;
 	RAISE DEBUG 'url parameter: %', url;
 	RAISE DEBUG 'post parameter: %', post;
-
-	RAISE INFO 'quals parameter: %', quals;
 END; $$ LANGUAGE PLPGSQL;

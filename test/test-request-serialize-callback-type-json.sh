@@ -33,5 +33,4 @@ for inf in "$test_dir/request-serialize-callback-type-json-indent/"*".in"; do
 	test "$r" "$out" "$in"
 done
 
-
 kill $spid

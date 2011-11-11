@@ -1,0 +1,31 @@
+INFO:  quals parameter: <node name="OpExpr">
+	<params>
+		<param name="opno" value="98"/>
+		<param name="opfuncid" value="67"/>
+		<param name="opresulttype" value="16"/>
+		<param name="opretset" value="f"/>
+		<param name="opcollid" value="0"/>
+		<param name="inputcollid" value="100"/>
+		<param name="location" value="38"/>
+	</params>
+	<children>
+		<node name="Var" value="">
+			<params>
+				<param name="varno" value="1"/>
+				<param name="varattno" value="1"/>
+				<param name="vartype" value="25"/>
+				<param name="vartypmod" value="-1"/>
+				<param name="varcollid" value="100"/>
+				<param name="varlevelsup" value="0"/>
+				<param name="varnoold" value="1"/>
+				<param name="varoattno" value="1"/>
+				<param name="location" value="33"/>
+			</params>
+		</node>
+		<node name="Const" value="TITLE">
+			<params>
+			</params>
+		</node>
+	</children>
+</node>
+

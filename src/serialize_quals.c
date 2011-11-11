@@ -337,7 +337,7 @@ serialize_node_without_children_callback_xml(int indent, char *name, List *param
 char*
 serialize_list_separator_callback_xml(int indent)
 {
-	return get_newline(indent);
+	return "";
 }
 
 /* read description in header file (to keep in single place) */

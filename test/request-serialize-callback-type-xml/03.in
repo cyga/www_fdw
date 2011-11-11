@@ -1,0 +1,1 @@
+select * from www_fdw_test where title='TITLE' and link='LINK' or not substring(snippet,2,5)='NIPPE';
