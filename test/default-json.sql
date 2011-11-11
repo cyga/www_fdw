@@ -7,5 +7,3 @@ CREATE FOREIGN TABLE www_fdw_test (
 	link text,
 	snippet text
 ) SERVER www_fdw_server_test;
-
--- TODO: do tests here
