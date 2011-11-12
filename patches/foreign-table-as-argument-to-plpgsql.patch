@@ -1,8 +1,13 @@
 diff --git a/src/pl/plpgsql/src/pl_comp.c b/src/pl/plpgsql/src/pl_comp.c
-index 578cae5..cfcd963 100644
+index 578cae5..f579d98 100644
 --- a/src/pl/plpgsql/src/pl_comp.c
 +++ b/src/pl/plpgsql/src/pl_comp.c
-@@ -1944,7 +1944,8 @@ build_row_from_class(Oid classOid)
+@@ -1940,11 +1940,12 @@ build_row_from_class(Oid classOid)
+ 	classStruct = RelationGetForm(rel);
+ 	relname = RelationGetRelationName(rel);
+ 
+-	/* accept relation, sequence, view, or composite type entries */
++	/* accept relation, sequence, view, composite type or foreign table entries */
  	if (classStruct->relkind != RELKIND_RELATION &&
  		classStruct->relkind != RELKIND_SEQUENCE &&
  		classStruct->relkind != RELKIND_VIEW &&
