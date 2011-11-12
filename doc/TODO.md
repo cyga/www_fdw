@@ -1,6 +1,4 @@
 * docs
-  ** README.md
-  1/4 day
   ** examples
   1 day
   ** move/update wiki page (to github)

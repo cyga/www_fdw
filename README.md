@@ -1,32 +1,43 @@
 www_fdw
-============
+=======
 
 This library contains a PostgreSQL extension,
 a Foreign Data Wrapper (FDW) handler of PostgreSQL
-which provide easy way for interacting with different web-services.
+which provides easy way for interacting with different web-services.
 
 Installation
-------------
+============
 
-    $ export USE_PGXS=1
-    $ make && make install
-    $ psql -c "CREATE EXTENSION www_fdw" db
+$ export USE_PGXS=1
+$ make && make install
+$ psql -c "CREATE EXTENSION www_fdw" db
 
-The CREATE EXTENSION statement creates not only FDW handlers but also
-Data Wrapper, Foreign Server, User Mapping and table.
+After that you need to create server for extension.
+The simpliest example here is:
+--snip
+$ cat test/default-json.sql 
+DROP EXTENSION IF EXISTS www_fdw CASCADE;
+CREATE EXTENSION www_fdw;
+CREATE SERVER www_fdw_server_test FOREIGN DATA WRAPPER www_fdw OPTIONS (uri 'http://localhost:7777');
+CREATE USER MAPPING FOR current_user SERVER www_fdw_server_test;
+CREATE FOREIGN TABLE www_fdw_test (
+	title text,
+	link text,
+	snippet text
+) SERVER www_fdw_server_test;
+--snap
+
+For more examples check doc/examples.md
 
 PostgreSQL server installation
-----------------------------
+==============================
 
-In order to work with xml type (used in response_deserialize_callback) your installation has to support xml type. Usually it means building PostgreSQL with --with-libxml option.
+If your response isn't of xml type or you don't plan to use xml parsing in response_deserialize_callback - don't bother about it.
+Otherwise, in order to work with xml type (used in response_deserialize_callback) your installation has to support xml type. Usually it means building PostgreSQL with --with-libxml option.
+If you plan to use response_deserialize_callback for xml but with own parsing mechanism - your callback will be passed with text parameter.
 
-Usage
------
-
-TODO
-
-Depencency
-----------
+Depencencies
+============
 
 This module depends on
 
@@ -35,16 +46,16 @@ This module depends on
 
 The source of libjson is included this module package and linked as a
 static library, wheares libcurl is assumed installed in the system.
-You may need additional development package, as `libcurl-dev` in yum.
-Consult your system and repository owner for more detail.
+You may need additional development package, as libcurl-dev.
+Consult your system and repository owner for more details.
 
-Author
-------
+Author(s)
+=========
 
 Alex Sudakov <cygakob@gmail.com>
 
 Copyright and License
----------------------
+=====================
 
 This module is free software; you can redistribute it and/or modify it under
 the [PostgreSQL License](http://www.opensource.org/licenses/postgresql).
@@ -57,10 +68,9 @@ and the following two paragraphs appear in all copies.
 In no event shall author(s) be liable to any party for direct,
 indirect, special, incidental, or consequential damages, including
 lost profits, arising out of the use of this software and its documentation,
-even if Hitoshi Harada has been advised of the possibility of such damage.
+even if author(s) has been advised of the possibility of such damage.
 
 Author(s) specifically disclaims any warranties,
 including, but not limited to, the implied warranties of merchantability and
-fitness for a particular purpose. The software provided hereunder is on an "as
-is" basis, and author(s) has no obligations to provide maintenance,
+fitness for a particular purpose. The software provided hereunder is on an "as is" basis, and author(s) has no obligations to provide maintenance,
 support, updates, enhancements, or modifications.
