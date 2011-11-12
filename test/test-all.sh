@@ -1,9 +1,20 @@
 #!/bin/bash
 test_dir=`echo $0 | perl -pe's#(.*)/.*#$1#;'`
 
+function help {
+    echo "$0 [-h|--help] [--json] [--xml] [-a|--all]"
+    echo "-h|--help     prints this help message"
+    echo "--json        run tests which use json postgres extension"
+    echo "--xml         run tests which use xml postgres feature (compiled with --libxml)"
+    echo "-a|--all      run all available tests"
+    exit;
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --)     shift; break 2;;
+        -h)		help;;
+        --help)	help;;
         -a)		all=1; shift;;
         --all)	all=1; shift;;
         --json)	json=1; shift;;

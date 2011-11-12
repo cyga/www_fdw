@@ -11,3 +11,5 @@
   1/8 day
   ** read/understand how to send patches and send it
   1/8 day
+
+* fix perms for test/expected
