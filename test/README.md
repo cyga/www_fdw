@@ -39,13 +39,14 @@ Dependencies:
   * bash
   * perl
   * Mojo web framework. Can be installed with:
-    ** `sudo sh -c "curl -L cpanmin.us | perl - Mojolicious"`
-    ** For more details read at:
-    ** http://mojolicio.us/
+      * `sudo sh -c "curl -L cpanmin.us | perl - Mojolicious"`
+      * For more details read at:
+      * http://mojolicio.us/
 
 Current user has to have access for extension creation.
 
 Each test file do following things:
+
   * starts up simple server;
   * initializes extension with current case properties;
   * runs number of queries and checks output.
@@ -56,7 +57,7 @@ It outputs results for each test file it runs and stats for all executed files e
 
 There are tests those need postgres to be compiled with xml feature support (--libxml).
 Also there are tests those need following json data type support:
-http://git.postgresql.org/gitweb/?p=json-datatype.git;a=summary
+[json data type implementation for postgres](http://git.postgresql.org/gitweb/?p=json-datatype.git;a=summary)
 All these dependent tests are skipped by default in `test/test-all.sh`. Look for CLI option to force them.
 
 Development json parser tests
