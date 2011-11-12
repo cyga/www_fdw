@@ -8,24 +8,24 @@ which provides easy way for interacting with different web-services.
 Installation
 ============
 
-$ export USE_PGXS=1
-$ make && make install
-$ psql -c "CREATE EXTENSION www_fdw" db
+    $ export USE_PGXS=1
+    $ make && make install
+    $ psql -c "CREATE EXTENSION www_fdw" db
 
 After that you need to create server for extension.
 The simpliest example here is:
---snip
-$ cat test/default-json.sql 
-DROP EXTENSION IF EXISTS www_fdw CASCADE;
-CREATE EXTENSION www_fdw;
-CREATE SERVER www_fdw_server_test FOREIGN DATA WRAPPER www_fdw OPTIONS (uri 'http://localhost:7777');
-CREATE USER MAPPING FOR current_user SERVER www_fdw_server_test;
-CREATE FOREIGN TABLE www_fdw_test (
-	title text,
-	link text,
-	snippet text
-) SERVER www_fdw_server_test;
---snap
+
+    $ cat test/default-json.sql
+    DROP EXTENSION IF EXISTS www_fdw CASCADE;
+    CREATE EXTENSION www_fdw;
+    CREATE SERVER www_fdw_server_test FOREIGN DATA WRAPPER www_fdw OPTIONS (uri 'http://localhost:7777');
+    CREATE USER MAPPING FOR current_user SERVER www_fdw_server_test;
+    CREATE FOREIGN TABLE www_fdw_test (
+        title text,
+        link text,
+        snippet text
+    ) SERVER www_fdw_server_test;
+
 
 For more examples check doc/examples.md
 
