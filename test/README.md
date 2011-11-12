@@ -1,32 +1,41 @@
+Test types
+==========
+
 There are 3 types of tests currently:
+
   * standard PGXS regression tests;
   * different test cases;
   * development json parser tests.
 
 Standard postgres PGXS regression tests
-=======================================
+---------------------------------------
 
 Location:
+
   * `test/sql/` - input files
   * `test/expected/` - output files
 
 Each test has same filename base, but differs in extension:
+
   * .sql - for input;
   * .out - for output.
 
 Currently there is only one simple test. It do following:
+
   * check types (used in extension) creation;
   * check extension/server/user_mapping creation.
 
 It's executed with `make testinstall` (after `make && make install`). Current user has to have access for extension creation.
 
 Different test cases
-====================
+--------------------
 
 Location:
+
 `test/test-*.sh`
 
 Dependencies:
+
   * bash
   * perl
   * Mojo web framework. Can be installed with:
@@ -51,9 +60,10 @@ http://git.postgresql.org/gitweb/?p=json-datatype.git;a=summary
 All these dependent tests are skipped by default in `test/test-all.sh`. Look for CLI option to force them.
 
 Development json parser tests
-=============================
+-----------------------------
 
 Location:
+
 `test/json_parser`
 
 Can be executed with "json_parser.sh" script. It compiles json parser executable, runs it against all given input files and checks against corresponding output files. Proper output looks like:
