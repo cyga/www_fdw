@@ -27,7 +27,7 @@ The simpliest example here is:
     ) SERVER www_fdw_server_test;
 
 
-For more examples check [doc/examples.md](https://github.com/cyga/www_fdw/tree/master/doc/examples.md).
+For more examples check [github wiki](https://github.com/cyga/www_fdw/wiki/Examples).
 
 For proper usage of deserialize callbacks you need to use 9.2 version (version with the patch [patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch](https://github.com/cyga/www_fdw/tree/master/patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch)). 
 
