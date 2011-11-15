@@ -27,7 +27,14 @@ The simpliest example here is:
     ) SERVER www_fdw_server_test;
 
 
-For more examples check doc/examples.md
+For more examples check [doc/examples.md](https://github.com/cyga/www_fdw/tree/master/doc/examples.md).
+
+For proper usage of deserialize callbacks you need to use 9.2 version (version with the patch [patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch](https://github.com/cyga/www_fdw/tree/master/patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch)). 
+
+Documentation
+=============
+
+Up-to-date documenation can be found at [github](https://github.com/cyga/www_fdw/wiki/WWW-FDW-postgres-extension).
 
 PostgreSQL server installation
 ==============================
@@ -48,6 +55,13 @@ The source of libjson is included this module package and linked as a
 static library, wheares libcurl is assumed installed in the system.
 You may need additional development package, as libcurl-dev.
 Consult your system and repository owner for more details.
+
+Development
+===========
+
+* [source](http://github.com/cyga/www_fdw);
+* [documentation](https://github.com/cyga/www_fdw/wiki/WWW-FDW-postgres-extension);
+* [test/README.md](https://github.com/cyga/www_fdw/blob/master/test/README.md) - documentation on test system.
 
 Author(s)
 =========
