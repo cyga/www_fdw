@@ -60,7 +60,7 @@ Development
 ===========
 
 * [source](http://github.com/cyga/www_fdw);
-* [documentation](https://github.com/cyga/www_fdw/wiki/WWW-FDW-postgres-extension);
+* [documentation](https://github.com/cyga/www_fdw/wiki/Documentation);
 * [test/README.md](https://github.com/cyga/www_fdw/blob/master/test/README.md) - documentation on test system.
 
 Author(s)
