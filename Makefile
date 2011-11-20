@@ -9,7 +9,6 @@ DATA		= $(filter-out $(wildcard sql/*--*.sql),$(wildcard sql/*.sql))
 TESTS		= $(wildcard test/sql/*.sql)
 REGRESS		= $(patsubst test/sql/%.sql,%,$(TESTS))
 REGRESS_OPTS= --inputdir=test
-DOCS		= $(wildcard doc/*.md)
 PG_CONFIG	= pg_config
 LIBJSON		= libjson-0.8
 # use module big instead:
