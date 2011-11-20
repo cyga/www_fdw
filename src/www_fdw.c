@@ -497,12 +497,14 @@ describe_spi_code(int code)
 }
 
 /*
- * serialize_request_parametersWithCallback
+ * serialize_request_parameters_with_callback
  * serialize request parameters using specified callback
  * currently following serialize of quals are supported:
- *  * same as with debug_print_parse
  *  * null (pass as it as null no matter on quals)
+ *  * log (same as with debug_print_parse)
  *  * empty string otherwise (plus issue warning)
+ *  * json (pass as it as null no matter on quals)
+ *  * xml (pass as it as null no matter on quals)
  * there is not finished branch for tree serialization into json/xml
  * but it started taking too much time and postponed for next versions (if any)
  */
@@ -663,8 +665,18 @@ serialize_request_parameters(ForeignScanState* node, StringInfoData *url)
 	if (node->ss.ps.plan->qual)
 	{
 		bool		param_first = true;
+		char		char_first = '?', *ch;
 		ListCell   *lc;
 		List	   *quals = list_copy(node->ss.ps.qual);
+
+		/* check if we have '?' already in the url -
+		 * append our parameters starting with '&', not '?' */
+		for(ch = url->data; *ch; ch++)
+			if('?' == *ch)
+			{
+				char_first	= '&';
+				break;
+			}
 
 		foreach (lc, quals)
 		{
@@ -677,7 +689,7 @@ serialize_request_parameters(ForeignScanState* node, StringInfoData *url)
 			{
 				if (param_first)
 				{
-					appendStringInfoChar(url, '?');
+					appendStringInfoChar(url, char_first);
 					param_first	= false;
 				}
 				else
