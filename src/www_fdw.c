@@ -1519,7 +1519,7 @@ www_begin(ForeignScanState *node, int eflags)
 	curl = curl_easy_init();
 	curl_easy_setopt(curl, CURLOPT_URL, url.data);
 	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error_buffer);
-	if(post.post)
+	if(post.post || 0 == strcmp(opts->method_select, "POST"))
 	{
 		curl_easy_setopt(curl, CURLOPT_POST, 1);
 		if(0 < post.content_type.len)
