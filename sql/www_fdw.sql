@@ -12,6 +12,7 @@ CREATE TYPE WWWFdwOptions AS (
 	method_insert						text,
 	method_delete						text,
 	method_update						text,
+	request_user_agent					text,
 	request_serialize_callback			text,
 	request_serialize_type				text,
 	request_serialize_human_readable	text,

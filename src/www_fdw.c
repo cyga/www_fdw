@@ -57,6 +57,7 @@ static struct WWW_fdw_option valid_options[] =
 	{ "method_delete",	ForeignServerRelationId },
 	{ "method_update",	ForeignServerRelationId },
 
+	{ "request_user_agent",	ForeignServerRelationId },
 	{ "request_serialize_callback",	ForeignServerRelationId },
 	{ "request_serialize_type",	ForeignServerRelationId },
 	{ "request_serialize_human_readable",	ForeignServerRelationId },
@@ -81,6 +82,7 @@ typedef struct	WWW_fdw_options
 	char*	method_insert;
 	char*	method_delete;
 	char*	method_update;
+	char*	request_user_agent;
 	char*	request_serialize_callback;
 	char*	request_serialize_type;
 	char*	request_serialize_human_readable;
@@ -182,6 +184,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 	char		*method_insert	= NULL;
 	char		*method_delete	= NULL;
 	char		*method_update	= NULL;
+	char		*request_user_agent= NULL;
 	char		*request_serialize_callback	= NULL;
 	char		*request_serialize_type	= NULL;
 	char		*request_serialize_human_readable	= NULL;
@@ -233,6 +236,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 		if(parse_parameter("method_insert", &method_insert, def)) continue;
 		if(parse_parameter("method_delete", &method_delete, def)) continue;
 		if(parse_parameter("method_update", &method_update, def)) continue;
+		if(parse_parameter("request_user_agent", &request_user_agent, def)) continue;
 		if(parse_parameter("request_serialize_callback", &request_serialize_callback, def)) continue;
 		if(parse_parameter("request_serialize_type", &request_serialize_type, def)) continue;
 		if(parse_parameter("request_serialize_human_readable", &request_serialize_human_readable, def))
@@ -1152,6 +1156,7 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 		opts->method_delete,
 		opts->method_update,
 
+		opts->request_user_agent,
 		opts->request_serialize_callback,
 		opts->request_serialize_type,
 		opts->request_serialize_human_readable,
@@ -1518,6 +1523,7 @@ www_begin(ForeignScanState *node, int eflags)
 	/* interacting with the server */
 	curl = curl_easy_init();
 	curl_easy_setopt(curl, CURLOPT_URL, url.data);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, opts->request_user_agent);
 	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error_buffer);
 	if(post.post || 0 == strcmp(opts->method_select, "POST"))
 	{
@@ -1903,6 +1909,7 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	opts->method_insert	= NULL;
 	opts->method_delete	= NULL;
 	opts->method_update	= NULL;
+	opts->request_user_agent	= NULL;
 	opts->request_serialize_callback	= NULL;
 	opts->request_serialize_type	= NULL;
 	opts->request_serialize_human_readable	= NULL;
@@ -1942,6 +1949,9 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 		if (strcmp(def->defname, "method_update") == 0)
 			opts->method_update	= defGetString(def);
 
+		if (strcmp(def->defname, "request_user_agent") == 0)
+			opts->request_user_agent	= defGetString(def);
+
 		if (strcmp(def->defname, "request_serialize_callback") == 0)
 			opts->request_serialize_callback	= defGetString(def);
 
@@ -1971,6 +1981,8 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	if (!opts->method_insert) opts->method_insert	= "PUT";
 	if (!opts->method_delete) opts->method_delete	= "DELETE";
 	if (!opts->method_update) opts->method_update	= "POST";
+
+	if (!opts->request_user_agent) opts->request_user_agent	= "www_fdw postgres extension";
 
 	if (!opts->request_serialize_type) opts->request_serialize_type	= "log";
 	if (!opts->request_serialize_human_readable) opts->request_serialize_human_readable	= "0";
