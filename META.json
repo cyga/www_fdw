@@ -1,4 +1,10 @@
 {
+   "provides": {
+       "www_fdw": {
+			"abstract": "FDW extension for different web services",
+			"version": "0.1.0"
+	   }
+   },
    "name": "www_fdw",
    "abstract": "FDW extension for different web services",
    "tags": ["fdw", "www", "web service"],
