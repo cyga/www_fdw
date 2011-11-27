@@ -2,7 +2,8 @@
    "provides": {
        "www_fdw": {
 			"abstract": "FDW extension for different web services",
-			"version": "0.1.0"
+			"version": "0.1.0",
+			"file": "sql/www_fdw.sql"
 	   }
    },
    "name": "www_fdw",
