@@ -3,7 +3,7 @@
        "www_fdw": {
 			"abstract": "FDW extension for different web services",
 			"version": "0.1.4",
-			"file": "sql/www_fdw.sql"
+			"file": "src/www_fdw.c"
 	   }
    },
    "name": "www_fdw",
