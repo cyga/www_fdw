@@ -2,7 +2,7 @@
    "provides": {
        "www_fdw": {
 			"abstract": "FDW extension for different web services",
-			"version": "0.1.2",
+			"version": "0.1.4",
 			"file": "sql/www_fdw.sql"
 	   }
    },
@@ -19,8 +19,8 @@
 	    "type": "git"
 	}
    },
-   "release_status": "unstable",
-   "version": "0.1.2",
+   "release_status": "stable",
+   "version": "0.1.4",
    "maintainer": [
        "Alex Sudakov <cygakob@gmail.com>"
    ],
