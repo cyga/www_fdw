@@ -34,7 +34,7 @@ For proper usage of deserialize callbacks you need to use 9.2 version (version w
 Documentation
 =============
 
-Up-to-date documenation can be found at [github](https://github.com/cyga/www_fdw/wiki/WWW-FDW-postgres-extension).
+Up-to-date documenation can be found at [github](https://github.com/cyga/www_fdw/wiki/Documentation).
 
 PostgreSQL server installation
 ==============================
