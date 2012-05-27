@@ -29,7 +29,25 @@ The simpliest example here is:
 
 For more examples check [github wiki](https://github.com/cyga/www_fdw/wiki/Examples).
 
-For proper usage of deserialize callbacks you need to use 9.2 early version or version with the patch [patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch](https://github.com/cyga/www_fdw/tree/master/patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch). 
+postgresql versions
+-------------------
+
+* 9.2 - supported by the master branch;
+* 9.1 - for proper usage of deserialize callbacks you need to use the patch [patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch](https://github.com/cyga/www_fdw/tree/master/patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch).
+
+XML
+---
+
+For XML support you need to install postgresql server with --with-libxml configure option and (check libxml dependency below).
+
+JSON
+----
+
+For json support in your callbacks you need to install [json type for postgresql](http://git.postgresql.org/gitweb/?p=json-datatype.git;a=summary).
+
+This type is used only for custom callback functions only. Even though, you can parse text representatins of json in this case.
+
+Current implementation of postrgresql json native type doesn't allow to retrieve fields, thus can't be used in current state.
 
 Documentation
 =============
@@ -50,6 +68,7 @@ This module depends on
 
   * [libcurl](http://curl.haxx.se/libcurl/)
   * [libjson](http://projects.snarc.org/libjson/)
+  * [libxml](http://en.wikipedia.org/wiki/Libxml2)
 
 The source of libjson is included this module package and linked as a
 static library, wheares libcurl is assumed installed in the system.
