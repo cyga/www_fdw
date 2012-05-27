@@ -12,6 +12,9 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "optimizer/cost.h"
+#include "optimizer/pathnode.h"
+#include "optimizer/planmain.h"
+#include "optimizer/restrictinfo.h"
 #include "parser/parsetree.h"
 #include "storage/fd.h"
 #include "utils/rel.h"
@@ -123,9 +126,19 @@ PG_FUNCTION_INFO_V1(www_fdw_validator);
 /*
  * FDW callback routines
  */
-static FdwPlan *www_plan(Oid foreigntableid,
-						PlannerInfo *root,
-						RelOptInfo *baserel);
+static void www_get_foreign_rel_size(PlannerInfo *root,
+								  RelOptInfo *baserel,
+								  Oid foreigntableid);
+static void www_get_foreign_paths(PlannerInfo *root,
+								RelOptInfo *baserel,
+								Oid foreigntableid);
+static ForeignScan *www_get_foreign_plan(PlannerInfo *root,
+									   RelOptInfo *baserel,
+									   Oid foreigntableid,
+									   ForeignPath *best_path,
+									   List *tlist,
+									   List *scan_clauses);
+static void www_explain_foreign_scan(ForeignScanState *node, ExplainState *es);
 static void www_explain(ForeignScanState *node, ExplainState *es);
 static void www_begin(ForeignScanState *node, int eflags);
 static TupleTableSlot *www_iterate(ForeignScanState *node);
@@ -306,7 +319,9 @@ www_fdw_handler(PG_FUNCTION_ARGS)
 	 * Anything except Begin/Iterate is blank so far,
 	 * but FDW interface assumes all valid function pointers.
 	 */
-	fdwroutine->PlanForeignScan = www_plan;
+    fdwroutine->GetForeignRelSize = www_get_foreign_rel_size;
+    fdwroutine->GetForeignPaths = www_get_foreign_paths;
+    fdwroutine->GetForeignPlan = www_get_foreign_plan;
 	fdwroutine->ExplainForeignScan = www_explain;
 	fdwroutine->BeginForeignScan = www_begin;
 	fdwroutine->IterateForeignScan = www_iterate;
@@ -428,20 +443,79 @@ www_param(Node *node, TupleDesc tupdesc)
 }
 
 /*
- * www_plan
+ * www_get_forein_rel_size
  *   Create a FdwPlan, which is empty for now.
+ *     Obtain relation size estimates for a foreign table
  */
-static FdwPlan *
-www_plan(Oid foreigntableid, PlannerInfo *root, RelOptInfo *baserel)
+static void
+www_get_foreign_rel_size(PlannerInfo *root,
+                     RelOptInfo *baserel,
+                     Oid foreigntableid)
 {
-	FdwPlan	   *fdwplan;
+   baserel->fdw_private = NULL;
+   /* we can't calculate value for baserel->rows here */
+}
 
-	d("www_plan routine");
+/*
+ * www_get_foreign_paths
+ *		Create possible access paths for a scan on the foreign table
+ *
+ *		Currently we don't support any push-down feature, so there is only one
+ *		possible access path, which simply returns all records in the order in
+ *		the data file.
+ */
+static void
+www_get_foreign_paths(PlannerInfo *root,
+					RelOptInfo *baserel,
+					Oid foreigntableid)
+{
+    /* calculations from file_fdw
+     * we can't calculate value for baserel->rows here
+     * */
+	Cost		cpu_per_tuple   = cpu_tuple_cost * 10 + baserel->baserestrictcost.per_tuple;
+	Cost		startup_cost    = baserel->baserestrictcost.startup;
+	Cost		total_cost      = startup_cost + cpu_per_tuple * baserel->rows;
 
-	fdwplan = makeNode(FdwPlan);
-	fdwplan->fdw_private = NIL;
+	/* Create a ForeignPath node and add it as only possible path */
+	add_path(baserel, (Path *)
+			 create_foreignscan_path(root, baserel,
+									 baserel->rows,
+									 startup_cost,
+									 total_cost,
+									 NIL, /* no pathkeys */
+									 NULL, /* no outer rel either */
+									 NIL)); /* no fdw_private data */
+}
 
-	return fdwplan;
+/*
+ * www_get_foreign_plan
+ *		Create a ForeignScan plan node for scanning the foreign table
+ */
+static ForeignScan *
+www_get_foreign_plan(PlannerInfo *root,
+				   RelOptInfo *baserel,
+				   Oid foreigntableid,
+				   ForeignPath *best_path,
+				   List *tlist,
+				   List *scan_clauses)
+{
+	Index		scan_relid = baserel->relid;
+
+	/*
+	 * We have no native ability to evaluate restriction clauses, so we just
+	 * put all the scan_clauses into the plan node's qual list for the
+	 * executor to check.  So all we have to do here is strip RestrictInfo
+	 * nodes from the clauses and ignore pseudoconstants (which will be
+	 * handled elsewhere).
+	 */
+	scan_clauses = extract_actual_clauses(scan_clauses, false);
+
+	/* Create the ForeignScan node */
+	return make_foreignscan(tlist,
+							scan_clauses,
+							scan_relid,
+							NIL, /* no expressions to evaluate */
+							NIL); /* no private state either */
 }
 
 /*
