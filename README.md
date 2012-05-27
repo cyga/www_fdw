@@ -33,7 +33,7 @@ postgresql versions
 -------------------
 
 * 9.2 - supported by the master branch;
-* 9.1 - for proper usage of deserialize callbacks you need to use the patch [patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch](https://github.com/cyga/www_fdw/tree/master/patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch).
+* 9.1 - use git tag "9.1" to retrieve working version. For proper usage of deserialize callbacks you need to use the patch [patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch](https://github.com/cyga/www_fdw/tree/master/patches/foreign-table-as-argument-to-plpgsql_parse_cwordtype.patch).
 
 XML
 ---
