@@ -10,6 +10,14 @@ psql="$bin/psql"
 
 waits=3
 
+# check if json type (custom one, not new one in postgre itself) is installed
+output=`$psql -tA -c"select to_json('asdf'::text)"`
+if [[ "$?" != "0" || '"asdf"' != "$output" ]]; then
+    echo "json type (http://git.postgresql.org/gitweb/?p=json-datatype.git;a=summary) wasn't properly installed"
+    echo "skipping this tests"
+    exit
+fi
+
 trap 'if [ -n "$spid" ]; then echo "killing server $spid"; kill $spid; fi; exit' 2 13 15 
 
 $psql -f "$test_dir/json-response-deserialize-callback.sql"
