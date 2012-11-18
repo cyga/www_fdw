@@ -1244,7 +1244,7 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 	MemoryContext	mctxt = CurrentMemoryContext, spimctxt;
 
 	SPI_connect_wrapper();
-	res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwoptions'", true, 0);
+	res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE t.typname='wwwfdwoptions'", true, 0);
 	if(0 > res)
 	{
 		ereport(ERROR,
@@ -1307,7 +1307,7 @@ get_www_fdw_post_parameters(PostParameters *post, Oid *post_type, Datum *post_va
 	MemoryContext	mctxt = CurrentMemoryContext, spimctxt;
 
 	SPI_connect_wrapper();
-	res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE ns.nspname=current_schema() AND t.typname='wwwfdwpostparameters'", true, 0);
+	res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE t.typname='wwwfdwpostparameters'", true, 0);
 	if(0 > res)
 	{
 		ereport(ERROR,
