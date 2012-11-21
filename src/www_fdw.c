@@ -393,6 +393,42 @@ www_param(Node *node, TupleDesc tupdesc)
 	if (node == NULL)
 		return NULL;
 
+/* TODO add support for bool operators, they look like:
+ * col=false
+              :qual (
+                 {BOOLEXPR 
+                 :boolop not 
+                 :args (
+                    {VAR 
+                    :varno 1 
+                    :varattno 2 
+                    :vartype 16 
+                    :vartypmod -1 
+                    :varcollid 0 
+                    :varlevelsup 0 
+                    :varnoold 1 
+                    :varoattno 2 
+                    :location 33
+                    }
+                 )
+                 :location -1
+                 }
+              )
+  * col=true
+              :qual (
+                 {VAR 
+                 :varno 1 
+                 :varattno 2 
+                 :vartype 16 
+                 :vartypmod -1 
+                 :varcollid 0 
+                 :varlevelsup 0 
+                 :varnoold 1 
+                 :varoattno 2 
+                 :location 33
+                 }
+              )
+ */
 	if (IsA(node, OpExpr))
 	{
 		OpExpr	   *op = (OpExpr *) node;
@@ -404,7 +440,41 @@ www_param(Node *node, TupleDesc tupdesc)
 		if (list_length(op->args) != 2)
 			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Operators with not 2 arguments aren't supported")));
 
-		if (op->opfuncid != F_TEXTEQ)
+		if (!(
+            op->opfuncid == F_TEXTEQ
+            ||
+            /* integers */
+            op->opfuncid == F_INT2EQ
+            ||
+            op->opfuncid == F_INT4EQ
+            ||
+            op->opfuncid == F_INT24EQ
+            ||
+            op->opfuncid == F_INT42EQ
+            ||
+            op->opfuncid == F_INT8EQ
+            ||
+            op->opfuncid == F_INT84EQ
+            ||
+            op->opfuncid == F_INT48EQ
+            ||
+            op->opfuncid == F_INT28EQ
+            ||
+            op->opfuncid == F_INT82EQ
+            ||
+            op->opfuncid == F_DATE_EQ
+            ||
+            op->opfuncid == F_TIME_EQ
+            ||
+            op->opfuncid == F_TIMESTAMP_EQ
+            ||
+            /* can't find it's definition, but it's also TIMESTAMP_EQ */
+            op->opfuncid == 2052
+            /*
+            ||
+            op->opfuncid == 
+            */
+        ))
 			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Invalid operator, only '=' is supported")));
 
 		left = list_nth(op->args, 0);
@@ -427,7 +497,7 @@ www_param(Node *node, TupleDesc tupdesc)
 		key = NameStr(tupdesc->attrs[varattno - 1]->attname);
 
 		initStringInfo(&buf);
-		val = TextDatumGetCString(((Const *) right)->constvalue);
+		val = serialize_const((Const *) right);
 		appendStringInfo(&buf, "%s=%s", percent_encode((unsigned char *) key, -1),
 			percent_encode((unsigned char *) val, -1));
 		return buf.data;
@@ -1244,6 +1314,10 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 	MemoryContext	mctxt = CurrentMemoryContext, spimctxt;
 
 	SPI_connect_wrapper();
+    /* read following:
+     * http://wiki.postgresql.org/wiki/Developer_FAQ#How_do_I_efficiently_access_information_in_system_catalogs_from_the_backend_code.3F
+     * may be it makes sense reimplementing following select
+     */
 	res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE t.typname='wwwfdwoptions'", true, 0);
 	if(0 > res)
 	{
@@ -1307,6 +1381,10 @@ get_www_fdw_post_parameters(PostParameters *post, Oid *post_type, Datum *post_va
 	MemoryContext	mctxt = CurrentMemoryContext, spimctxt;
 
 	SPI_connect_wrapper();
+    /* read following:
+     * http://wiki.postgresql.org/wiki/Developer_FAQ#How_do_I_efficiently_access_information_in_system_catalogs_from_the_backend_code.3F
+     * may be it makes sense reimplementing following select
+     */
 	res	= SPI_execute("SELECT t.oid,t.typname,t.typnamespace FROM pg_type t join pg_namespace ns ON t.typnamespace=ns.oid WHERE t.typname='wwwfdwpostparameters'", true, 0);
 	if(0 > res)
 	{

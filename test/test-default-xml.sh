@@ -15,61 +15,82 @@ perl -Mojo -e'a("/" => {text => "<doc><nrows>3</nrows><rows><row><title>3</title
 spid=$!
 sleep $waits
 
-sql="select * from www_fdw_test"
+sql="select title,link,snippet from www_fdw_test"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||' "$sql"
 
 # check same query (on purpose):
-sql="select * from www_fdw_test"
+sql="select title,link,snippet from www_fdw_test"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||' "$sql"
 
-sql="select * from www_fdw_test limit 1"
+sql="select title,link,snippet from www_fdw_test limit 1"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||' "$sql"
 
 # check same query (on purpose):
-sql="select * from www_fdw_test limit 1"
+sql="select title,link,snippet from www_fdw_test limit 1"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||' "$sql"
 
-sql="select * from www_fdw_test order by title"
+sql="select title,link,snippet from www_fdw_test order by title"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||' "$sql"
 
-sql="select * from www_fdw_test order by title desc"
+sql="select title,link,snippet from www_fdw_test order by title desc"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||' "$sql"
 
-sql="select * from www_fdw_test order by title limit 1"
+sql="select title,link,snippet from www_fdw_test order by title limit 1"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||' "$sql"
 
 kill $spid
 
-perl -Mojo -e'a("/" => {text => "<doc><nrows>3</nrows><rows><row><title>3</title><snippet>SNIPPeT</snippet></row><row><title>TiTuL</title><snippet>SNIPPeT2</snippet></row></rows></doc>"})->start' daemon --listen http://*:7777 &
+perl -Mojo -e'a("/" => {text => "<doc><nrows>3</nrows><rows><row><id>12</id><b>true</b><d>2012-11-20</d><t>00:01:02</t><ts>2012-06-16 22:02:13</ts><title>3</title><snippet>SNIPPeT</snippet></row><row><id>13</id><b>false</b><d>2012-11-21</d><t>00:01:03</t><ts>2012-06-16 22:02:14</ts><title>TiTuL</title><snippet>SNIPPeT2</snippet></row></rows></doc>"})->start' daemon --listen http://*:7777 &
 spid=$!
 sleep $waits
 
-sql="select * from www_fdw_test"
+sql="select title,link,snippet from www_fdw_test"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||SNIPPeT\nTiTuL||SNIPPeT2' "$sql"
 
-sql="select * from www_fdw_test limit 1"
+sql="select title,link,snippet from www_fdw_test limit 1"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||SNIPPeT' "$sql"
 
-sql="select * from www_fdw_test order by snippet"
+sql="select title,link,snippet from www_fdw_test order by snippet"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||SNIPPeT\nTiTuL||SNIPPeT2' "$sql"
 
-sql="select * from www_fdw_test order by snippet desc"
+sql="select title,link,snippet from www_fdw_test order by snippet desc"
 r=`$psql -tA -c"$sql"`
 test "$r" $'TiTuL||SNIPPeT2\n3||SNIPPeT' "$sql"
 
-sql="select * from www_fdw_test order by title limit 1"
+sql="select title,link,snippet from www_fdw_test order by title limit 1"
 r=`$psql -tA -c"$sql"`
 test "$r" $'3||SNIPPeT' "$sql"
+
+sql="select id from www_fdw_test where id=12 limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'12' "$sql"
+
+# TODO not implemented yet
+# sql="select b from www_fdw_test where b=true limit 1"
+# r=`$psql -tA -c"$sql"`
+# test "$r" $'true' "$sql"
+
+sql="select d from www_fdw_test where d='2012-11-20' limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'2012-11-20' "$sql"
+
+sql="select t from www_fdw_test where t='00:01:02' limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'00:01:02' "$sql"
+
+sql="select ts from www_fdw_test where ts='2012-06-16 22:02:13' limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'2012-06-16 22:02:13' "$sql"
 
 kill $spid
 

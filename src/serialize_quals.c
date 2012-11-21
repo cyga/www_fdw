@@ -1,5 +1,8 @@
 #include "serialize_quals.h"
 #include "utils.h"
+#include "utils/date.h"
+#include "utils/datetime.h"
+#include "utils/timestamp.h"
 #include <string.h>
 
 char* INDENT_STRING	= "\t";
@@ -377,6 +380,18 @@ serialize_const(Const *c)
 			return str.data;
 		case FLOAT8OID:
 			appendStringInfo(&str, "%f", DatumGetFloat8(c->constvalue));
+			return str.data;
+		case DATEOID:
+			appendStringInfo(&str, "%s", DatumGetCString(DirectFunctionCall1(date_out, c->constvalue)));
+			return str.data;
+		case TIMEOID:
+			appendStringInfo(&str, "%s", DatumGetCString(DirectFunctionCall1(time_out, c->constvalue)));
+			return str.data;
+		case TIMESTAMPOID:
+			appendStringInfo(&str, "%s %s",
+                DatumGetCString(DirectFunctionCall1(date_out, DirectFunctionCall1(timestamp_date, c->constvalue))),
+                DatumGetCString(DirectFunctionCall1(time_out, DirectFunctionCall1(timestamp_time, c->constvalue)))
+            );
 			return str.data;
 		default:
 			appendStringInfo(&str, "'unhandled constant oid: %i'", c->consttype);
