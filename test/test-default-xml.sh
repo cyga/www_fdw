@@ -75,10 +75,15 @@ sql="select id from www_fdw_test where id=12 limit 1"
 r=`$psql -tA -c"$sql"`
 test "$r" $'12' "$sql"
 
-# TODO not implemented yet
-# sql="select b from www_fdw_test where b=true limit 1"
-# r=`$psql -tA -c"$sql"`
-# test "$r" $'true' "$sql"
+sql="select b from www_fdw_test where b=true limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'t' "$sql"
+
+# server doesn't really filter
+# we check ability to parse tree strucure in psql
+sql="select b from www_fdw_test where b=false limit 1"
+r=`$psql -tA -c"$sql"`
+test "$r" $'t' "$sql"
 
 sql="select d from www_fdw_test where d='2012-11-20' limit 1"
 r=`$psql -tA -c"$sql"`

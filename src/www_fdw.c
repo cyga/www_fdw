@@ -393,43 +393,84 @@ www_param(Node *node, TupleDesc tupdesc)
 	if (node == NULL)
 		return NULL;
 
-/* TODO add support for bool operators, they look like:
- * col=false
+	if (
+        /* col=false
+            :qual (
+                {BOOLEXPR
+                :boolop not
+                :args (
+                {VAR
+                :varno 1
+                :varattno 2
+                :vartype 16
+                :vartypmod -1
+                :varcollid 0
+                :varlevelsup 0
+                :varnoold 1
+                :varoattno 2
+                :location 33
+                }
+                )
+                :location -1
+                }
+            )
+        */
+        IsA(node, BoolExpr)
+    ) {
+        BoolExpr    *op = (BoolExpr*)node;
+        if(
+            NOT_EXPR == op->boolop
+            &&
+		    1 == list_length(op->args)
+        ) {
+		    Node    *arg = list_nth(op->args, 0);
+            if( IsA(arg, Var) ) {
+                char    *key;
+		        StringInfoData	buf;
+                Index   varattno = ((Var *) arg)->varattno;
+                Assert(0 < varattno && varattno <= tupdesc->natts);
+                key = NameStr(tupdesc->attrs[varattno - 1]->attname);
+
+                initStringInfo(&buf);
+                appendStringInfo(&buf, "%s=%s", percent_encode((unsigned char *) key, -1),
+                    percent_encode((unsigned char*)"false", -1));
+		        return buf.data;
+            }
+            else {
+			    ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("NOT operator with not a var detected")));
+            }
+        }
+    }
+	else if (
+        /* col=true
               :qual (
-                 {BOOLEXPR 
-                 :boolop not 
-                 :args (
-                    {VAR 
-                    :varno 1 
-                    :varattno 2 
-                    :vartype 16 
-                    :vartypmod -1 
-                    :varcollid 0 
-                    :varlevelsup 0 
-                    :varnoold 1 
-                    :varoattno 2 
-                    :location 33
-                    }
-                 )
-                 :location -1
-                 }
-              )
-  * col=true
-              :qual (
-                 {VAR 
-                 :varno 1 
-                 :varattno 2 
-                 :vartype 16 
-                 :vartypmod -1 
-                 :varcollid 0 
-                 :varlevelsup 0 
-                 :varnoold 1 
-                 :varoattno 2 
+                 {VAR
+                 :varno 1
+                 :varattno 2
+                 :vartype 16
+                 :vartypmod -1
+                 :varcollid 0
+                 :varlevelsup 0
+                 :varnoold 1
+                 :varoattno 2
                  :location 33
                  }
               )
- */
-	if (IsA(node, OpExpr))
+        */
+        IsA(node, Var)
+    ) {
+        char    *key;
+		StringInfoData	buf;
+        Index   varattno = ((Var *) node)->varattno;
+        Assert(0 < varattno && varattno <= tupdesc->natts);
+        key = NameStr(tupdesc->attrs[varattno - 1]->attname);
+
+        initStringInfo(&buf);
+        appendStringInfo(&buf, "%s=%s", percent_encode((unsigned char *) key, -1),
+            percent_encode((unsigned char*)"true", -1));
+		return buf.data;
+    }
+	else if (IsA(node, OpExpr))
 	{
 		OpExpr	   *op = (OpExpr *) node;
 		Node	   *left, *right, *tmp;
