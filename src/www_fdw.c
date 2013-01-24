@@ -69,6 +69,11 @@ static struct WWW_fdw_option valid_options[] =
 	{ "response_deserialize_callback",	ForeignServerRelationId },
 	{ "response_iterate_callback",	ForeignServerRelationId },
 
+	{ "ssl_cert",   ForeignServerRelationId },
+	{ "ssl_key",    ForeignServerRelationId },
+	{ "cainfo", ForeignServerRelationId },
+	{ "proxy",  ForeignServerRelationId },
+
 	/* Sentinel */
 	{ NULL,			InvalidOid }
 };
@@ -92,6 +97,10 @@ typedef struct	WWW_fdw_options
 	char*	response_type;
 	char*	response_deserialize_callback;
 	char*	response_iterate_callback;
+	char*   ssl_cert;
+	char*   ssl_key;
+	char*   cainfo;
+	char*   proxy;
 } WWW_fdw_options;
 
 typedef struct Reply
@@ -204,6 +213,10 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 	char		*response_type	= NULL;
 	char		*response_deserialize_callback	= NULL;
 	char		*response_iterate_callback	= NULL;
+	char            *ssl_cert      = NULL;
+	char            *ssl_key       = NULL;
+	char            *cainfo        = NULL;
+	char            *proxy         = NULL;
 
 	d("www_fdw_validator routine");
 
@@ -284,6 +297,10 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 		};
 		if(parse_parameter("response_deserialize_callback", &response_deserialize_callback, def)) continue;
 		if(parse_parameter("response_iterate_callback", &response_iterate_callback, def)) continue;
+		if(parse_parameter("ssl_cert", &ssl_cert, def)) continue;
+		if(parse_parameter("ssl_key", &ssl_key, def)) continue;
+		if(parse_parameter("cainfo", &cainfo, def)) continue;
+		if(parse_parameter("proxy", &proxy, def)) continue;
 	}
 
 	PG_RETURN_VOID();
@@ -513,7 +530,7 @@ www_param(Node *node, TupleDesc tupdesc)
             op->opfuncid == 2052
             /*
             ||
-            op->opfuncid == 
+            op->opfuncid ==
             */
         ))
 			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("Invalid operator, only '=' is supported")));
@@ -752,7 +769,7 @@ serialize_list_separator_callback_json) );
 		/* set empty string and issue warning */
 		initStringInfo(&qualSer);
 
-		ereport(WARNING, 
+		ereport(WARNING,
 			(
 				errcode(ERRCODE_FDW_INVALID_OPTION_NAME),
 				errmsg("Invalid request_serialize_type: %s", opts->request_serialize_type)
@@ -815,7 +832,7 @@ serialize_list_separator_callback_json) );
 
 	resetStringInfo(url);
 	appendStringInfoString(url, rurl);
-	
+
 	if(!isnull)
 	{
 		Datum datum;
@@ -1348,7 +1365,12 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 
 		opts->response_type,
 		opts->response_deserialize_callback,
-		opts->response_iterate_callback
+		opts->response_iterate_callback,
+
+		opts->ssl_cert,
+		opts->ssl_key,
+		opts->cainfo,
+		opts->proxy
 	};
 	TupleDesc		tuple_desc;
 	AttInMetadata*	aim;
@@ -1775,6 +1797,25 @@ www_begin(ForeignScanState *node, int eflags)
 						));
 	}
 
+        /* Ioana START changed on Jan 18, 2013 - added 4 more options for secure connections */
+        if(opts->ssl_cert)
+        {
+                curl_easy_setopt(curl, CURLOPT_SSLCERT, opts->ssl_cert);
+        }
+        if(opts->ssl_key)
+        {
+                curl_easy_setopt(curl, CURLOPT_SSLKEY, opts->ssl_key);
+        }
+        if(opts->cainfo)
+        {
+                curl_easy_setopt(curl, CURLOPT_CAINFO, opts->cainfo);
+        }
+        if(opts->proxy)
+        {
+                curl_easy_setopt(curl, CURLOPT_PROXY, opts->proxy);
+        }
+        /* Ioana END changed on Jan 18, 2013 */
+
 	ret = curl_easy_perform(curl);
 	curl_easy_cleanup(curl);
 	if(ret) {
@@ -2110,6 +2151,11 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	opts->response_deserialize_callback	= NULL;
 	opts->response_iterate_callback		= NULL;
 
+	opts->ssl_cert         = NULL;
+	opts->ssl_key          = NULL;
+	opts->cainfo           = NULL;
+	opts->proxy            = NULL;
+
 	/* Loop through the options, and get the server/port */
 	foreach(lc, options)
 	{
@@ -2162,6 +2208,18 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 
 		if (strcmp(def->defname, "response_iterate_callback") == 0)
 			opts->response_iterate_callback	= defGetString(def);
+
+		if (strcmp(def->defname, "ssl_cert") == 0)
+                        opts->ssl_cert = defGetString(def);
+
+                if (strcmp(def->defname, "ssl_key") == 0)
+                        opts->ssl_key = defGetString(def);
+
+                if (strcmp(def->defname, "cainfo") == 0)
+                        opts->cainfo = defGetString(def);
+
+                if (strcmp(def->defname, "proxy") == 0)
+                        opts->proxy = defGetString(def);
 	}
 
 	/* Default values, if required */

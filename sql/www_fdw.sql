@@ -18,7 +18,11 @@ CREATE TYPE WWWFdwOptions AS (
 	request_serialize_human_readable	text,
 	response_type						text,
 	response_deserialize_callback		text,
-	response_iterate_callback			text
+	response_iterate_callback			text,
+	ssl_cert text,
+	ssl_key text,
+	cainfo text,
+	proxy text
 );
 -- type needed for returning post options in serialize_request_callback
 CREATE TYPE WWWFdwPostParameters AS (
