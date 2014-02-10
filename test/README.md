@@ -20,7 +20,7 @@ Each test has same filename base, but differs in extension:
   * .sql - for input;
   * .out - for output.
 
-Currently there is only one simple test. It do following:
+Currently there is only one simple test. It does following:
 
   * check types (used in extension) creation;
   * check extension/server/user_mapping creation.
