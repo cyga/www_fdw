@@ -5,7 +5,11 @@
 #ifdef DEBUG
 #define WHERESTR "[file %s, line %d]"
 #define WHEREARG __FILE__, __LINE__
-#define d(...) (elog(DEBUG1, WHERESTR, WHEREARG), elog(DEBUG1, __VA_ARGS__))
+#define d(...) \
+	do { \
+        elog(DEBUG1, WHERESTR, WHEREARG); \
+        elog(DEBUG1, __VA_ARGS__); \
+	} while(0)
 #else
 #define d(...)
 #endif
