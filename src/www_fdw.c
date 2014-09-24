@@ -1,6 +1,11 @@
 #include "postgres.h"
-
+#include "pg_config.h"
 #include "access/reloptions.h"
+
+#if PG_VERSION_NUM >= 90300
+ #include "access/htup_details.h"
+#endif
+
 #include "catalog/pg_foreign_table.h"
 #include "catalog/pg_foreign_server.h"
 #include "commands/defrem.h"
