@@ -2,7 +2,7 @@
    "provides": {
        "www_fdw": {
 			"abstract": "FDW extension for different web services",
-			"version": "0.1.6",
+			"version": "0.1.8",
 			"file": "src/www_fdw.c"
 	   }
    },
@@ -20,7 +20,7 @@
 	}
    },
    "release_status": "stable",
-   "version": "0.1.6",
+   "version": "0.1.8",
    "maintainer": [
        "Alex Sudakov <cygakob@gmail.com>"
    ],
