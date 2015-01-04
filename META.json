@@ -28,5 +28,12 @@
    "meta-spec": {
       "version": "1.0.0",
       "url": "http://pgxn.org/meta/spec.txt"
-   }
+   },
+   "prereqs": {
+      "runtime": {
+         "requires": {
+            "PostgreSQL": "9.2.0"
+         }
+      }
+   },
 }
