@@ -78,6 +78,7 @@ static struct WWW_fdw_option valid_options[] =
 	{ "ssl_key",    ForeignServerRelationId },
 	{ "cainfo", ForeignServerRelationId },
 	{ "proxy",  ForeignServerRelationId },
+	{ "cookie",  ForeignServerRelationId },
 
 	/* Sentinel */
 	{ NULL,			InvalidOid }
@@ -106,6 +107,7 @@ typedef struct	WWW_fdw_options
 	char*   ssl_key;
 	char*   cainfo;
 	char*   proxy;
+	char*   cookie;
 } WWW_fdw_options;
 
 typedef struct Reply
@@ -222,6 +224,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 	char            *ssl_key       = NULL;
 	char            *cainfo        = NULL;
 	char            *proxy         = NULL;
+	char            *cookie        = NULL;
 
 	d("www_fdw_validator routine");
 
@@ -306,6 +309,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 		if(parse_parameter("ssl_key", &ssl_key, def)) continue;
 		if(parse_parameter("cainfo", &cainfo, def)) continue;
 		if(parse_parameter("proxy", &proxy, def)) continue;
+		if(parse_parameter("cookie", &cookie, def)) continue;
 	}
 
 	PG_RETURN_VOID();
@@ -1375,7 +1379,8 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 		opts->ssl_cert,
 		opts->ssl_key,
 		opts->cainfo,
-		opts->proxy
+		opts->proxy,
+		opts->cookie
 	};
 	TupleDesc		tuple_desc;
 	AttInMetadata*	aim;
@@ -1820,6 +1825,10 @@ www_begin(ForeignScanState *node, int eflags)
                 curl_easy_setopt(curl, CURLOPT_PROXY, opts->proxy);
         }
         /* Ioana END changed on Jan 18, 2013 */
+		if(opts->cookie)
+        {
+                curl_easy_setopt(curl, CURLOPT_COOKIE, opts->cookie);
+        }
 
 	ret = curl_easy_perform(curl);
 	curl_easy_cleanup(curl);
@@ -2160,6 +2169,7 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	opts->ssl_key          = NULL;
 	opts->cainfo           = NULL;
 	opts->proxy            = NULL;
+	opts->cookie           = NULL;	
 
 	/* Loop through the options, and get the server/port */
 	foreach(lc, options)
@@ -2225,6 +2235,9 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 
                 if (strcmp(def->defname, "proxy") == 0)
                         opts->proxy = defGetString(def);
+				
+				if (strcmp(def->defname, "cookie") == 0)
+	                    opts->cookie = defGetString(def);
 	}
 
 	/* Default values, if required */
