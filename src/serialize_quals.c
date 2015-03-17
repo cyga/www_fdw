@@ -91,7 +91,7 @@ serialize_node_with_children_callback_json(int *indent, char *name, List *params
 
 	d("serialize_node_with_children_callback_json: indent - %i, name - '%s'", *indent, name);
 
-	appendStringInfo(prefix, "%s{%s%s\"name\":%s\"%s\",%s%s\"params\"%s:%s[%s",
+	appendStringInfo(prefix, "%s{%s%s\"name\":%s\"%s\",%s%s\"params\"%s:%s{%s",
 					 get_indent(*indent),
 					 get_newline(*indent),
 					 get_indent(indent1),
@@ -132,7 +132,7 @@ serialize_node_with_children_callback_json(int *indent, char *name, List *params
 	if(!first)
 		appendStringInfo(prefix, "%s", get_newline(*indent) );
 
-	appendStringInfo(prefix, "%s],%s%s\"children\":%s[%s",
+	appendStringInfo(prefix, "%s},%s%s\"children\":%s[%s",
 					 get_indent(indent1),
 					 get_newline(*indent),
 					 get_indent(indent1),
@@ -163,7 +163,7 @@ serialize_node_without_children_callback_json(int indent, char *name, List *para
 	d("serialize_node_without_children_callback_json: indent - %i, name - '%s', value - '%s'", indent, name, value);
 
 	initStringInfo(&str);
-	appendStringInfo(&str, "%s{%s%s\"name\":%s\"%s\",%s%s\"params\"%s:%s[%s",
+	appendStringInfo(&str, "%s{%s%s\"name\":%s\"%s\",%s%s\"params\"%s:%s{%s",
 					 get_indent(indent),
 					 get_newline(indent),
 					 get_indent(indent1),
@@ -205,7 +205,7 @@ serialize_node_without_children_callback_json(int indent, char *name, List *para
 	if(!first)
 		appendStringInfo(&str, "%s", get_newline(indent) );
 
-	appendStringInfo(&str, "%s],%s%s\"value\":%s\"%s\"%s%s}",
+	appendStringInfo(&str, "%s},%s%s\"value\":%s\"%s\"%s%s}",
 					 get_indent(indent1),
 					 get_newline(indent),
 					 get_indent(indent1),
