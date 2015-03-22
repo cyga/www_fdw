@@ -45,14 +45,14 @@ JSON
 
 For json support in your callbacks you need to install [json type for postgresql](http://git.postgresql.org/gitweb/?p=json-datatype.git;a=summary).
 
-This type is used only for custom callback functions only. Even though, you can parse text representatins of json in this case.
+This type is used only for custom callback functions only. Even though, you can parse text representations of json in this case.
 
-Current implementation of postrgresql json native type doesn't allow to retrieve fields, thus can't be used in current state.
+Current implementation of postgresql json native type doesn't allow to retrieve fields, thus can't be used in current state.
 
 Documentation
 =============
 
-Up-to-date documenation can be found at [github](https://github.com/cyga/www_fdw/wiki/Documentation).
+Up-to-date documentation can be found at [github](https://github.com/cyga/www_fdw/wiki/Documentation).
 
 PostgreSQL server installation
 ==============================
@@ -70,9 +70,9 @@ This module depends on
   * [libjson](http://projects.snarc.org/libjson/)
   * [libxml](http://en.wikipedia.org/wiki/Libxml2)
 
-The source of libjson is included this module package and linked as a
-static library, wheares libcurl is assumed installed in the system.
-You may need additional development package, as libcurl-dev.
+The source of libjson is included in this module package and linked as a
+static library, whereas libcurl is assumed to be installed in the system.
+You may need additional development packages, as libcurl-dev.
 Consult your system and repository owner for more details.
 
 Development
