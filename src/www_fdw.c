@@ -648,11 +648,15 @@ www_get_foreign_plan(PlannerInfo *root,
 	scan_clauses = extract_actual_clauses(scan_clauses, false);
 
 	/* Create the ForeignScan node */
-	return make_foreignscan(tlist,
-							scan_clauses,
-							scan_relid,
-							NIL, /* no expressions to evaluate */
-							NIL); /* no private state either */
+	return make_foreignscan(tlist
+							,scan_clauses
+							,scan_relid
+							,NIL /* no expressions to evaluate */
+							,NIL /* no private state either */
+#if (PG_VERSION_NUM >= 90500)
+                            ,NIL /* no scan_tlist either */
+#endif
+    );
 }
 
 /*
