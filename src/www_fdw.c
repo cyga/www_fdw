@@ -1759,8 +1759,8 @@ www_begin(ForeignScanState *node, int eflags)
 		curl_easy_setopt(curl, CURLOPT_POST, 1);
 		if(0 < post.content_type.len)
 		{
-			curl_slist_append(curl_opts, "Content-type:");
-			curl_slist_append(curl_opts, post.content_type.data);
+			curl_opts = curl_slist_append(curl_opts, "Content-type:");
+			curl_opts = curl_slist_append(curl_opts, post.content_type.data);
 			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_opts);
 		}
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post.data.data);
