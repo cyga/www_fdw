@@ -153,7 +153,15 @@ static ForeignScan *www_get_foreign_plan(PlannerInfo *root,
 									   Oid foreigntableid,
 									   ForeignPath *best_path,
 									   List *tlist,
-									   List *scan_clauses);
+									   List *scan_clauses
+#if PG_VERSION_NUM >= 90500
+,
+/*
+* Require PostgreSQL >= 9.5
+*/
+									Plan *outer_plan
+#endif   									   
+									   );
 static void www_explain_foreign_scan(ForeignScanState *node, ExplainState *es);
 static void www_explain(ForeignScanState *node, ExplainState *es);
 static void www_begin(ForeignScanState *node, int eflags);
@@ -621,7 +629,15 @@ www_get_foreign_paths(PlannerInfo *root,
 									 total_cost,
 									 NIL, /* no pathkeys */
 									 NULL, /* no outer rel either */
-									 NIL)); /* no fdw_private data */
+									 NULL
+#if PG_VERSION_NUM >= 90500
+,
+/*
+* Require PostgreSQL >= 9.5
+*/
+					 NIL /* no fdw_private list */
+#endif  												 
+									 )); /* no fdw_private data */
 }
 
 /*
@@ -634,7 +650,15 @@ www_get_foreign_plan(PlannerInfo *root,
 				   Oid foreigntableid,
 				   ForeignPath *best_path,
 				   List *tlist,
-				   List *scan_clauses)
+				   List *scan_clauses
+#if PG_VERSION_NUM >= 90500
+,
+/*
+* Require PostgreSQL >= 9.5
+*/
+					Plan *outer_plan
+#endif    				   
+		)
 {
 	Index		scan_relid = baserel->relid;
 
@@ -655,6 +679,8 @@ www_get_foreign_plan(PlannerInfo *root,
 							,NIL /* no private state either */
 #if (PG_VERSION_NUM >= 90500)
                             ,NIL /* no scan_tlist either */
+                            ,NIL   /* no remote quals */ 
+							,outer_plan
 #endif
     );
 }
