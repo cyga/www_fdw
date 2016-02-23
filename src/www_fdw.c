@@ -66,6 +66,7 @@ static struct WWW_fdw_option valid_options[] =
 	{ "method_update",	ForeignServerRelationId },
 
 	{ "request_user_agent",	ForeignServerRelationId },
+    { "request_user_header", ForeignServerRelationId },
 	{ "request_serialize_callback",	ForeignServerRelationId },
 	{ "request_serialize_type",	ForeignServerRelationId },
 	{ "request_serialize_human_readable",	ForeignServerRelationId },
@@ -97,6 +98,7 @@ typedef struct	WWW_fdw_options
 	char*	method_delete;
 	char*	method_update;
 	char*	request_user_agent;
+    char*   request_user_header;
 	char*	request_serialize_callback;
 	char*	request_serialize_type;
 	char*	request_serialize_human_readable;
@@ -222,6 +224,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 	char		*method_delete	= NULL;
 	char		*method_update	= NULL;
 	char		*request_user_agent= NULL;
+    char        *request_user_header = NULL;
 	char		*request_serialize_callback	= NULL;
 	char		*request_serialize_type	= NULL;
 	char		*request_serialize_human_readable	= NULL;
@@ -279,6 +282,7 @@ www_fdw_validator(PG_FUNCTION_ARGS)
 		if(parse_parameter("method_delete", &method_delete, def)) continue;
 		if(parse_parameter("method_update", &method_update, def)) continue;
 		if(parse_parameter("request_user_agent", &request_user_agent, def)) continue;
+        if(parse_parameter("request_user_header", &request_user_header, def)) continue;
 		if(parse_parameter("request_serialize_callback", &request_serialize_callback, def)) continue;
 		if(parse_parameter("request_serialize_type", &request_serialize_type, def)) continue;
 		if(parse_parameter("request_serialize_human_readable", &request_serialize_human_readable, def))
@@ -1398,6 +1402,7 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
 		opts->method_update,
 
 		opts->request_user_agent,
+        opts->request_user_header,
 		opts->request_serialize_callback,
 		opts->request_serialize_type,
 		opts->request_serialize_human_readable,
@@ -1731,6 +1736,7 @@ www_begin(ForeignScanState *node, int eflags)
 	Datum			opts_value	= 0;
 	PostParameters	post;
 	struct curl_slist	*curl_opts = NULL;
+    int             header_set  = 0;
 
 	d("www_begin routine");
 
@@ -1780,6 +1786,13 @@ www_begin(ForeignScanState *node, int eflags)
 	curl_easy_setopt(curl, CURLOPT_URL, url.data);
 	curl_easy_setopt(curl, CURLOPT_USERAGENT, opts->request_user_agent);
 	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error_buffer);
+
+    if(opts->request_user_header)
+    {
+        curl_opts = curl_slist_append(curl_opts, opts->request_user_header);
+        header_set  = 1;
+    }
+
 	if(post.post || 0 == strcmp(opts->method_select, "POST"))
 	{
 		curl_easy_setopt(curl, CURLOPT_POST, 1);
@@ -1787,10 +1800,15 @@ www_begin(ForeignScanState *node, int eflags)
 		{
 			curl_opts = curl_slist_append(curl_opts, "Content-type:");
 			curl_opts = curl_slist_append(curl_opts, post.content_type.data);
-			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_opts);
+            header_set = 1;
 		}
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post.data.data);
 	}
+
+    if( header_set )
+    {
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_opts);
+    }
 
 	/* prepare parsers */
 	if( 0 == strcmp(opts->response_type, "json") )
@@ -2236,6 +2254,9 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 		if (strcmp(def->defname, "request_user_agent") == 0)
 			opts->request_user_agent	= defGetString(def);
 
+		if (strcmp(def->defname, "request_user_header") == 0)
+			opts->request_user_header	= defGetString(def);
+
 		if (strcmp(def->defname, "request_serialize_callback") == 0)
 			opts->request_serialize_callback	= defGetString(def);
 
@@ -2282,6 +2303,7 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 	if (!opts->method_update) opts->method_update	= "POST";
 
 	if (!opts->request_user_agent) opts->request_user_agent	= "www_fdw postgres extension";
+    if (!opts->request_user_header) opts->request_user_header = "";
 
 	if (!opts->request_serialize_type) opts->request_serialize_type	= "log";
 	if (!opts->request_serialize_human_readable) opts->request_serialize_human_readable	= "0";
