@@ -1807,6 +1807,19 @@ www_begin(ForeignScanState *node, int eflags)
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_opts);
     }
 
+    /* TODO
+     * implement & test all other methods:
+     * PUT
+     * POST
+     * and check POST is special:
+     * https://curl.haxx.se/libcurl/c/CURLOPT_CUSTOMREQUEST.html
+     * */
+    /* deleting */
+    if( 0 == strcmp(opts->method_select, "DELETE"))
+    {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE" );
+    }
+
     /* prepare parsers */
     if( 0 == strcmp(opts->response_type, "json") )
     {
