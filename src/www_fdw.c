@@ -1736,7 +1736,6 @@ www_begin(ForeignScanState *node, int eflags)
     Datum            opts_value    = 0;
     PostParameters    post;
     struct curl_slist    *curl_opts = NULL;
-    int             header_set  = 0;
 
     d("www_begin routine");
 
@@ -1790,7 +1789,6 @@ www_begin(ForeignScanState *node, int eflags)
     if(opts->request_user_header)
     {
         curl_opts = curl_slist_append(curl_opts, opts->request_user_header);
-        header_set  = 1;
     }
 
     if(post.post || 0 == strcmp(opts->method_select, "POST"))
@@ -1800,12 +1798,11 @@ www_begin(ForeignScanState *node, int eflags)
         {
             curl_opts = curl_slist_append(curl_opts, "Content-type:");
             curl_opts = curl_slist_append(curl_opts, post.content_type.data);
-            header_set = 1;
         }
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post.data.data);
     }
 
-    if( header_set )
+    if( curl_opts )
     {
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_opts);
     }
