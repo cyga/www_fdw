@@ -80,7 +80,8 @@ static struct WWW_fdw_option valid_options[] =
     { "cainfo", ForeignServerRelationId },
     { "proxy",  ForeignServerRelationId },
     { "cookie",  ForeignServerRelationId },
-
+    { "username",  ForeignServerRelationId },
+    { "password",  ForeignServerRelationId },
     /* Sentinel */
     { NULL,            InvalidOid }
 };
@@ -110,6 +111,8 @@ typedef struct    WWW_fdw_options
     char*   cainfo;
     char*   proxy;
     char*   cookie;
+    char*   username;
+    char*   password;
 } WWW_fdw_options;
 
 typedef struct Reply
@@ -236,6 +239,8 @@ www_fdw_validator(PG_FUNCTION_ARGS)
     char        *cainfo        = NULL;
     char        *proxy         = NULL;
     char        *cookie        = NULL;
+    char        *username      = NULL;
+    char        *password      = NULL;
 
     d("www_fdw_validator routine");
 
@@ -322,6 +327,8 @@ www_fdw_validator(PG_FUNCTION_ARGS)
         if(parse_parameter("cainfo", &cainfo, def)) continue;
         if(parse_parameter("proxy", &proxy, def)) continue;
         if(parse_parameter("cookie", &cookie, def)) continue;
+        if(parse_parameter("username", &username, def)) continue;
+        if(parse_parameter("password", &password, def)) continue;
     }
 
     PG_RETURN_VOID();
@@ -1418,7 +1425,9 @@ get_www_fdw_options(WWW_fdw_options *opts, Oid *opts_type, Datum *opts_value)
         opts->ssl_key,
         opts->cainfo,
         opts->proxy,
-        opts->cookie
+        opts->cookie,
+        opts->username,
+        opts->password
     };
     TupleDesc        tuple_desc;
     AttInMetadata*    aim;
@@ -1787,6 +1796,14 @@ www_begin(ForeignScanState *node, int eflags)
     curl = curl_easy_init();
     curl_easy_setopt(curl, CURLOPT_URL, url.data);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, opts->request_user_agent);
+    if ( opts->username ) 
+    {
+        curl_easy_setopt(curl, CURLOPT_USERNAME,  opts->username );
+    }
+    if ( opts->password )
+    {
+        curl_easy_setopt(curl, CURLOPT_PASSWORD,  opts->password );
+    }
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error_buffer);
 
     if(opts->request_user_header)
