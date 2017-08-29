@@ -901,7 +901,7 @@ serialize_list_separator_callback_json) );
         datum = GetAttributeByName(rpost_tuple_header, "data", &isnull);
         if(!isnull)
             appendStringInfoString(&post->data, TextDatumGetCString(datum));
-
+        
         datum = GetAttributeByName(rpost_tuple_header, "content_type", &isnull);
         resetStringInfo(&post->content_type);
         if(!isnull)
@@ -1782,7 +1782,7 @@ www_begin(ForeignScanState *node, int eflags)
     {
         /* call specified callback for forming request */
         initStringInfo(&post.data);
-        initStringInfo(&post.content_type);
+        initStringInfo(&post.content_type);        
         serialize_request_with_callback(opts, opts_type, opts_value, node, &url, &post);
     }
     else
@@ -1802,7 +1802,8 @@ www_begin(ForeignScanState *node, int eflags)
     }
     if ( opts->password )
     {
-        curl_easy_setopt(curl, CURLOPT_PASSWORD,  opts->password );
+        curl_easy_setopt(curl, CURLOPT_PASSWORD, opts->password );
+        curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
     }
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error_buffer);
 
@@ -2248,6 +2249,8 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
     opts->cainfo           = NULL;
     opts->proxy            = NULL;
     opts->cookie           = NULL;
+    opts->username         = NULL;
+    opts->password         = NULL;
 
     /* Loop through the options, and get the server/port */
     foreach(lc, options)
@@ -2319,6 +2322,12 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
 
         if (strcmp(def->defname, "cookie") == 0)
             opts->cookie = defGetString(def);
+        
+        if (strcmp(def->defname, "username") == 0)
+            opts->username = defGetString(def);
+        
+        if (strcmp(def->defname, "password") == 0)
+            opts->password = defGetString(def);
     }
 
     /* Default values, if required */
