@@ -23,7 +23,7 @@ CREATE TYPE WWWFdwOptions AS (
 	ssl_key text,
 	cainfo text,
 	proxy text,
-	cookie text
+	cookie text,
         username text,
         password text
 );
