@@ -901,7 +901,7 @@ serialize_list_separator_callback_json) );
         datum = GetAttributeByName(rpost_tuple_header, "data", &isnull);
         if(!isnull)
             appendStringInfoString(&post->data, TextDatumGetCString(datum));
-        
+
         datum = GetAttributeByName(rpost_tuple_header, "content_type", &isnull);
         resetStringInfo(&post->content_type);
         if(!isnull)
@@ -1782,7 +1782,7 @@ www_begin(ForeignScanState *node, int eflags)
     {
         /* call specified callback for forming request */
         initStringInfo(&post.data);
-        initStringInfo(&post.content_type);        
+        initStringInfo(&post.content_type);
         serialize_request_with_callback(opts, opts_type, opts_value, node, &url, &post);
     }
     else
