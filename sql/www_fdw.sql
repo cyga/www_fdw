@@ -23,7 +23,9 @@ CREATE TYPE WWWFdwOptions AS (
 	ssl_key text,
 	cainfo text,
 	proxy text,
-	cookie text
+	cookie text,
+        username text,
+        password text
 );
 -- type needed for returning post options in serialize_request_callback
 CREATE TYPE WWWFdwPostParameters AS (
