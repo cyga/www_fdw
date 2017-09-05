@@ -26,7 +26,7 @@ all: sql/$(EXTENSION)--$(EXTVERSION).sql
 sql/$(EXTENSION)--$(EXTVERSION).sql: sql/$(EXTENSION).sql
 	cp $< $@
 
-DATA = sql/$(EXTENSION)--$(EXTVERSION).sql
+DATA = sql/$(EXTENSION)--*.sql
 EXTRA_CLEAN = sql/$(EXTENSION)--$(EXTVERSION).sql
 endif
 
