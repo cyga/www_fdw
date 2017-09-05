@@ -1,2 +1,2 @@
-ALTER TYPE WWWFdwOptions DROP ATTRIBUTE username text;
-ALTER TYPE WWWFdwOptions DROP ATTRIBUTE password text;
+ALTER TYPE WWWFdwOptions DROP ATTRIBUTE username ;
+ALTER TYPE WWWFdwOptions DROP ATTRIBUTE password ;
