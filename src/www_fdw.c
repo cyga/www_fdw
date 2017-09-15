@@ -1815,11 +1815,11 @@ www_begin(ForeignScanState *node, int eflags)
 
     if(post.post || 0 == strcmp(opts->method_select, "POST"))
     {
-        curl_easy_setopt(curl, CURLOPT_POST, 1);        
+        curl_easy_setopt(curl, CURLOPT_POST, 1);
         if(0 < post.content_type.len)
         {
-            initStringInfo(&postContentType); 
-            appendStringInfo(&postContentType,"Content-Type: %s", post.content_type.data )
+            initStringInfo(&postContentType);
+            appendStringInfo(&postContentType,"Content-Type: %s", post.content_type.data );
             curl_opts = curl_slist_append(curl_opts, postContentType.data);
         }
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post.data.data);
