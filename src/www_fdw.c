@@ -1735,19 +1735,20 @@ prepare_json_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type
 static void
 www_begin(ForeignScanState *node, int eflags)
 {
-    WWW_fdw_options    *opts;
-    CURL            *curl;
-    char            curl_error_buffer[CURL_ERROR_SIZE+1]    = {0};
-    CURLcode        ret;
+    WWW_fdw_options   *opts;
+    CURL              *curl;
+    char              curl_error_buffer[CURL_ERROR_SIZE+1]    = {0};
+    CURLcode          ret;
     StringInfoData    url;
-    json_parser        json_parserr;
-    json_parser_dom json_dom;
-    xmlParserCtxtPtr    xml_parserr    = NULL;
+    json_parser       json_parserr;
+    json_parser_dom   json_dom;
+    xmlParserCtxtPtr  xml_parserr    = NULL;
     StringInfoData    buffer;
-    Oid                opts_type    = 0;
-    Datum            opts_value    = 0;
+    Oid               opts_type    = 0;
+    Datum             opts_value    = 0;
     PostParameters    post;
-    struct curl_slist    *curl_opts = NULL;
+    StringInfoData    postContentType;
+    struct curl_slist *curl_opts = NULL;
 
     d("www_begin routine");
 
@@ -1814,11 +1815,12 @@ www_begin(ForeignScanState *node, int eflags)
 
     if(post.post || 0 == strcmp(opts->method_select, "POST"))
     {
-        curl_easy_setopt(curl, CURLOPT_POST, 1);
+        curl_easy_setopt(curl, CURLOPT_POST, 1);        
         if(0 < post.content_type.len)
         {
-            curl_opts = curl_slist_append(curl_opts, "Content-type:");
-            curl_opts = curl_slist_append(curl_opts, post.content_type.data);
+            initStringInfo(&postContentType); 
+            appendStringInfo(&postContentType,"Content-Type: %s", post.content_type.data )
+            curl_opts = curl_slist_append(curl_opts, postContentType.data);
         }
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post.data.data);
     }
