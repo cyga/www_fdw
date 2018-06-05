@@ -803,7 +803,7 @@ serialize_request_with_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts
                                     node->ss.ps.plan->qual,
                                     serialize_node_with_children_callback_json,
                                     serialize_node_without_children_callback_json,
-serialize_list_separator_callback_json) );
+                                    serialize_list_separator_callback_json) );
         nulls[1] = ' ';
     }
     else if(0 == strcmp("xml", opts->request_serialize_type))
@@ -862,7 +862,7 @@ serialize_list_separator_callback_json) );
         ereport(ERROR,
             (
                 errcode(ERRCODE_SYNTAX_ERROR),
-                errmsg("No results were returned from response_iterate_callback '%s': %i", opts->response_iterate_callback, SPI_processed)
+                errmsg("No results were returned from request_serialize_callback '%s': %i", opts->request_serialize_callback, SPI_processed)
             )
         );
     }
@@ -872,7 +872,7 @@ serialize_list_separator_callback_json) );
         ereport(ERROR,
             (
                 errcode(ERRCODE_SYNTAX_ERROR),
-                errmsg("More than 1 result was returned from response_iterate_callback '%s': %i", opts->response_iterate_callback, SPI_processed)
+                errmsg("More than 1 result was returned from request_serialize_callback '%s': %i", opts->request_serialize_callback, SPI_processed)
             )
         );
     }
