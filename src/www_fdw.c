@@ -803,7 +803,7 @@ serialize_request_with_callback(WWW_fdw_options *opts, Oid opts_type, Datum opts
                                     node->ss.ps.plan->qual,
                                     serialize_node_with_children_callback_json,
                                     serialize_node_without_children_callback_json,
-serialize_list_separator_callback_json) );
+                                    serialize_list_separator_callback_json) );
         nulls[1] = ' ';
     }
     else if(0 == strcmp("xml", opts->request_serialize_type))
@@ -862,7 +862,7 @@ serialize_list_separator_callback_json) );
         ereport(ERROR,
             (
                 errcode(ERRCODE_SYNTAX_ERROR),
-                errmsg("No results were returned from response_iterate_callback '%s': %i", opts->response_iterate_callback, SPI_processed)
+                errmsg("No results were returned from request_serialize_callback '%s': %i", opts->request_serialize_callback, SPI_processed)
             )
         );
     }
@@ -872,7 +872,7 @@ serialize_list_separator_callback_json) );
         ereport(ERROR,
             (
                 errcode(ERRCODE_SYNTAX_ERROR),
-                errmsg("More than 1 result was returned from response_iterate_callback '%s': %i", opts->response_iterate_callback, SPI_processed)
+                errmsg("More than 1 result was returned from request_serialize_callback '%s': %i", opts->request_serialize_callback, SPI_processed)
             )
         );
     }
@@ -1735,19 +1735,20 @@ prepare_json_result(ForeignScanState *node, WWW_fdw_options *opts, Oid opts_type
 static void
 www_begin(ForeignScanState *node, int eflags)
 {
-    WWW_fdw_options    *opts;
-    CURL            *curl;
-    char            curl_error_buffer[CURL_ERROR_SIZE+1]    = {0};
-    CURLcode        ret;
+    WWW_fdw_options   *opts;
+    CURL              *curl;
+    char              curl_error_buffer[CURL_ERROR_SIZE+1]    = {0};
+    CURLcode          ret;
     StringInfoData    url;
-    json_parser        json_parserr;
-    json_parser_dom json_dom;
-    xmlParserCtxtPtr    xml_parserr    = NULL;
+    json_parser       json_parserr;
+    json_parser_dom   json_dom;
+    xmlParserCtxtPtr  xml_parserr    = NULL;
     StringInfoData    buffer;
-    Oid                opts_type    = 0;
-    Datum            opts_value    = 0;
+    Oid               opts_type    = 0;
+    Datum             opts_value    = 0;
     PostParameters    post;
-    struct curl_slist    *curl_opts = NULL;
+    StringInfoData    postContentType;
+    struct curl_slist *curl_opts = NULL;
 
     d("www_begin routine");
 
@@ -1817,8 +1818,9 @@ www_begin(ForeignScanState *node, int eflags)
         curl_easy_setopt(curl, CURLOPT_POST, 1);
         if(0 < post.content_type.len)
         {
-            curl_opts = curl_slist_append(curl_opts, "Content-type:");
-            curl_opts = curl_slist_append(curl_opts, post.content_type.data);
+            initStringInfo(&postContentType);
+            appendStringInfo(&postContentType,"Content-Type: %s", post.content_type.data );
+            curl_opts = curl_slist_append(curl_opts, postContentType.data);
         }
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post.data.data);
     }
@@ -2237,6 +2239,7 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
     opts->method_delete    = NULL;
     opts->method_update    = NULL;
     opts->request_user_agent    = NULL;
+    opts->request_user_header   = NULL;
     opts->request_serialize_callback    = NULL;
     opts->request_serialize_type    = NULL;
     opts->request_serialize_human_readable    = NULL;
@@ -2342,7 +2345,6 @@ get_options(Oid foreigntableid, WWW_fdw_options *opts)
     if (!opts->method_update) opts->method_update    = "POST";
 
     if (!opts->request_user_agent) opts->request_user_agent    = "www_fdw postgres extension";
-    if (!opts->request_user_header) opts->request_user_header = "";
 
     if (!opts->request_serialize_type) opts->request_serialize_type    = "log";
     if (!opts->request_serialize_human_readable) opts->request_serialize_human_readable    = "0";
