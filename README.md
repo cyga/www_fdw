@@ -1,3 +1,8 @@
+Status
+======
+
+This project is no longer maintained. Fill free to clone it and fix for new postgresql versions. You can let me know (email address below) if you have it working, I'll put link here to your repository.
+
 www_fdw
 =======
 
@@ -58,9 +63,9 @@ Up-to-date documentation can be found at [github](https://github.com/cyga/www_fd
 PostgreSQL server installation
 ==============================
 
-If your response isn't of xml type or you don't plan to use xml parsing in response_deserialize_callback - don't bother about it.
-Otherwise, in order to work with xml type (used in response_deserialize_callback) your installation has to support xml type. Usually it means building PostgreSQL with --with-libxml option.
-If you plan to use response_deserialize_callback for xml but with own parsing mechanism - your callback will be passed with text parameter.
+If your response isn't of xml type or you don't plan to use xml parsing in `response_deserialize_callback` - don't bother about it.
+Otherwise, in order to work with xml type (used in `response_deserialize_callback`) your installation has to support xml type. Usually it means building PostgreSQL with `--with-libxml` option.
+If you plan to use `response_deserialize_callback` for xml but with own parsing mechanism - your callback will be passed with text parameter.
 
 Depencencies
 ============
